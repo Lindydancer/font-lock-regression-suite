@@ -1,0 +1,5162 @@
+«m:#»«x:!/usr/bin/env perl
+»«m:#»«x:
+»«m:# »«x:This file, ack, is generated code.
+»«m:# »«x:Please DO NOT EDIT or send patches for it.
+»«m:#»«x:
+»«m:# »«x:Please take a look at the source from
+»«m:# »«x:https://github.com/petdance/ack2
+»«m:# »«x:and submit patches against the individual files
+»«m:# »«x:that build ack.
+»«m:#»«x:
+»
+«k:package» «f:main»;
+
+«k:use» «f:strict»;
+«k:use» «f:warnings»;
+
+«k:our» «v:$VERSION» = «s:'2.14'»; «m:# »«x:Check http://beyondgrep.com/ for updates
+»
+«k:use» 5.008008;
+«k:use» «f:Getopt::Long» 2.35 ();
+«k:use» «f:Carp» 1.04 ();
+
+«k:use» «f:File::Spec» ();
+
+
+«m:# »«x:XXX Don't make this so brute force
+»«m:# »«x:See also: https://github.com/petdance/ack2/issues/89
+»
+«m:# »«x:These are all our globals.
+»
+«c:MAIN:» {
+    $App::Ack::orig_program_name = $0;
+    $0 = «t:join»(«s:' '», «s:'ack'», $0);
+    «k:if» ( $App::Ack::VERSION «t:ne» $main::VERSION ) {
+        App::Ack::«k:die»( «s:"Program/library version mismatch\n\t$0 is $main::VERSION\n\t»«:cperl-hash-face:$INC»«s:{'App/Ack.pm'} is $App::Ack::VERSION"» );
+    }
+
+    «m:# »«x:Do preliminary arg checking;
+»    «k:my» «v:$env_is_usable» = 1;
+    «k:for» «k:my» «v:$arg» ( «:cperl-array-face:@ARGV» ) {
+        «k:last» «k:if» ( $arg «t:eq» «s:'--'» );
+
+        «m:# »«x:Get the --thpppt, --bar, --cathy checking out of the way.
+»        $arg =~ «c:/»«f:^»«s:--th»«f:[»«s:pt»«f:]»«b:+»«s:t»«b:+»«f:$»«c:/» «t:and» App::Ack::_thpppt($arg);
+        $arg «t:eq» «s:'--bar'»         «t:and» App::Ack::_bar();
+        $arg «t:eq» «s:'--cathy'»       «t:and» App::Ack::_cathy();
+
+        «m:# »«x:See if we want to ignore the environment. (Don't tell Al Gore.)
+»        $arg «t:eq» «s:'--env'»         «t:and» $env_is_usable = 1;
+        $arg «t:eq» «s:'--noenv'»       «t:and» $env_is_usable = 0;
+    }
+
+    «k:if» ( «n:!»$env_is_usable ) {
+        «k:my» «:cperl-array-face:@keys» = ( «s:'ACKRC'», «:cperl-nonoverridable-face:grep» { «c:/»«f:^»«s:ACK_»«c:/» } «:cperl-nonoverridable-face:keys» «:cperl-hash-face:%ENV» );
+        «:cperl-nonoverridable-face:delete» «:cperl-hash-face:@ENV»{«:cperl-array-face:@keys»};
+    }
+    load_colors();
+
+    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»);
+    Getopt::Long::Configure(«s:'pass_through'», «s:'no_auto_abbrev'»);
+    Getopt::Long::GetOptions(
+        «s:'help'»       => «k:sub» { App::Ack::show_help(); «k:exit»; },
+        «s:'version'»    => «k:sub» { App::Ack::print_version_statement(); «k:exit»; },
+        «s:'man'»        => «k:sub» { App::Ack::show_man(); «k:exit»; },
+    );
+    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»);
+
+    «k:if» ( «n:!»«:cperl-array-face:@ARGV» ) {
+        App::Ack::show_help();
+        «k:exit» 1;
+    }
+
+    main();
+}
+
+«k:sub» «f:_compile_descend_filter» {
+    «k:my» ( «v:$opt» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$idirs»            = $opt->{«s:idirs»};
+    «k:my» «v:$dont_ignore_dirs» = $opt->{«s:no_ignore_dirs»};
+
+    «m:# »«x:if we have one or more --noignore-dir directives, we can't ignore
+»    «m:# »«x:entire subdirectory hierarchies, so we return an "accept all"
+»    «m:# »«x:filter and scrutinize the files more in _compile_file_filter
+»    «k:return» «k:if» $dont_ignore_dirs;
+    «k:return» «k:unless» $idirs && @{$idirs};
+
+    «k:my» «:cperl-hash-face:%ignore_dirs»;
+
+    «k:foreach» «k:my» «v:$idir» (@{$idirs}) {
+        «k:if» ( $idir =~ «c:/»«f:^»«k:(»«b:\»«t:w»«b:+»«k:)»«s::»«k:(»«f:.»«b:*»«k:)»«c:/» ) {
+            «k:if» ( $1 «t:eq» «s:'is'») {
+                «:cperl-hash-face:$ignore_dirs»{$2} = 1;
+            }
+            «k:else» {
+                Carp::croak( «s:'Non-is filters are not yet supported for --ignore-dir'» );
+            }
+        }
+        «k:else» {
+            Carp::croak( «:cperl-nonoverridable-face:qq»«s:{Invalid filter specification "$idir"}» );
+        }
+    }
+
+    «k:return» «k:sub» {
+        «k:return» «n:!»«:cperl-nonoverridable-face:exists» «:cperl-hash-face:$ignore_dirs»{$_} && «n:!»«:cperl-nonoverridable-face:exists» «:cperl-hash-face:$ignore_dirs»{$File::Next::dir};
+    };
+}
+
+«k:sub» «f:_compile_file_filter» {
+    «k:my» ( «v:$opt», «v:$start» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$ifiles» = $opt->{«s:ifiles»};
+    $ifiles  ||= [];
+
+    «k:my» «v:$ifiles_filters» = App::Ack::Filter::Collection->new();
+
+    «k:foreach» «k:my» «v:$filter_spec» (@{$ifiles}) {
+        «k:if» ( $filter_spec =~ «c:/»«f:^»«k:(»«b:\»«t:w»«b:+»«k:)»«s::»«k:(»«f:.»«b:+»«k:)»«c:/» ) {
+            «k:my» («v:$how»,«v:$what») = ($1,$2);
+            «k:my» «v:$filter» = App::Ack::Filter->create_filter($how, «:cperl-nonoverridable-face:split»(«c:/»«s:,»«c:/», $what));
+            $ifiles_filters->add($filter);
+        }
+        «k:else» {
+            Carp::croak( «:cperl-nonoverridable-face:qq»«s:{Invalid filter specification "$filter_spec"}» );
+        }
+    }
+
+    «k:my» «v:$filters»         = $opt->{«s:'filters'»} || [];
+    «k:my» «v:$direct_filters» = App::Ack::Filter::Collection->new();
+    «k:my» «v:$inverse_filters» = App::Ack::Filter::Collection->new();
+
+    «k:foreach» «k:my» «v:$filter» (@{$filters}) {
+        «k:if» ($filter->is_inverted()) {
+            «m:# »«x:We want to check if files match the uninverted filters
+»            $inverse_filters->add($filter->invert());
+        }
+        «k:else» {
+            $direct_filters->add($filter);
+        }
+    }
+
+    «k:my» «:cperl-hash-face:%is_member_of_starting_set» = «:cperl-nonoverridable-face:map» { (get_file_id($_) => 1) } @{$start};
+
+    «k:my» «v:$ignore_dir_list»      = $opt->{«s:idirs»};
+    «k:my» «v:$dont_ignore_dir_list» = $opt->{«s:no_ignore_dirs»};
+
+    «k:my» «:cperl-hash-face:%ignore_dir_set»;
+    «k:my» «:cperl-hash-face:%dont_ignore_dir_set»;
+
+    «k:foreach» «k:my» «v:$filter» (@{ $ignore_dir_list }) {
+        «k:if» ( $filter =~ «c:/»«f:^»«k:(»«b:\»«t:w»«b:+»«k:)»«s::»«k:(»«f:.»«b:*»«k:)»«c:/» ) {
+            «k:if» ( $1 «t:eq» «s:'is'» ) {
+                «:cperl-hash-face:$ignore_dir_set»{ $2 } = 1;
+            } «k:else» {
+                Carp::croak( «s:'Non-is filters are not yet supported for --ignore-dir'» );
+            }
+        } «k:else» {
+            Carp::croak( «:cperl-nonoverridable-face:qq»«s:{Invalid filter specification "$filter"}» );
+        }
+    }
+    «k:foreach» «k:my» «v:$filter» (@{ $dont_ignore_dir_list }) {
+        «k:if» ( $filter =~ «c:/»«f:^»«k:(»«b:\»«t:w»«b:+»«k:)»«s::»«k:(»«f:.»«b:*»«k:)»«c:/» ) {
+            «k:if» ( $1 «t:eq» «s:'is'» ) {
+                «:cperl-hash-face:$dont_ignore_dir_set»{ $2 } = 1;
+            } «k:else» {
+                Carp::croak( «s:'Non-is filters are not yet supported for --ignore-dir'» );
+            }
+        } «k:else» {
+            Carp::croak( «:cperl-nonoverridable-face:qq»«s:{Invalid filter specification "$filter"}» );
+        }
+    }
+
+    «k:my» «v:$match_filenames» = $opt->{«s:g»};
+    «k:my» «v:$match_regex»     = $opt->{«s:regex»};
+    «k:my» «v:$is_inverted»     = $opt->{«s:v»};
+
+    «k:return» «k:sub» {
+        «k:if» ( $match_filenames ) {
+            «k:if» ( $File::Next::name =~ «c:/»«v:$match_regex»«c:/» && $is_inverted ) {
+                «k:return»;
+            }
+            «k:if» ( $File::Next::name «n:!»~ «c:/»«v:$match_regex»«c:/» && «n:!»$is_inverted ) {
+                «k:return»;
+            }
+        }
+        «m:# »«x:ack always selects files that are specified on the command
+»        «m:# »«x:line, regardless of filetype.  If you want to ack a JPEG,
+»        «m:# »«x:and say "ack foo whatever.jpg" it will do it for you.
+»        «k:return» 1 «k:if» «:cperl-hash-face:$is_member_of_starting_set»{ get_file_id($File::Next::name) };
+
+        «k:if» ( $dont_ignore_dir_list ) {
+            «k:my» ( «:cperl-nonoverridable-face:undef», $dirname ) = File::Spec->splitpath($File::Next::name);
+            «k:my» «:cperl-array-face:@dirs»               = File::Spec->splitdir($dirname);
+
+            «k:my» «v:$is_ignoring» = 0;
+
+            «k:foreach» «k:my» «v:$dir» ( «:cperl-array-face:@dirs» ) {
+                «k:if» ( «:cperl-hash-face:$ignore_dir_set»{ $dir } ) {
+                    $is_ignoring = 1;
+                }
+                «k:elsif» ( «:cperl-hash-face:$dont_ignore_dir_set»{ $dir } ) {
+                    $is_ignoring = 0;
+                }
+            }
+            «k:if» ( $is_ignoring ) {
+                «k:return» 0;
+            }
+        }
+
+        «m:# »«x:Ignore named pipes found in directory searching.  Named
+»        «m:# »«x:pipes created by subprocesses get specified on the command
+»        «m:# »«x:line, so the rule of "always select whatever is on the
+»        «m:# »«x:command line" wins.
+»        «k:return» 0 «k:if» «f:-p» $File::Next::name;
+
+        «m:# »«x:We can't handle unreadable filenames; report them.
+»        «k:if» ( «t:not» «f:-r _» ) {
+            «k:use» «f:filetest» «s:'access'»;
+
+            «k:if» ( «t:not» «f:-R» $File::Next::name ) {
+                «k:if» ( $App::Ack::report_bad_filenames ) {
+                    App::Ack::«t:warn»( «s:"${File::Next::name}: cannot open file for reading"» );
+                }
+                «k:return» 0;
+            }
+        }
+
+        «k:my» «v:$resource» = App::Ack::Resource::Basic->new($File::Next::name);
+        «k:return» 0 «k:if» «n:!»$resource || $ifiles_filters->filter($resource);
+
+        «k:my» «v:$match_found» = $direct_filters->filter($resource);
+
+        «m:# »«x:Don't bother invoking inverse filters unless we consider the current resource a match
+»        «k:if» ( $match_found && $inverse_filters->filter( $resource ) ) {
+            $match_found = 0;
+        }
+        «k:return» $match_found;
+    };
+}
+
+«k:sub» «f:show_types» {
+    «k:my» «v:$resource» = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$ors»      = «:cperl-nonoverridable-face:shift»;
+
+    «k:my» «:cperl-array-face:@types» = filetypes( $resource );
+    «k:my» «v:$types» = «t:join»( «s:','», «:cperl-array-face:@types» );
+    «k:my» «v:$arrow» = «:cperl-array-face:@types» ? «s:' => '» : «s:' =>'»;
+    App::Ack::«:cperl-nonoverridable-face:print»( $resource->name, $arrow, «t:join»( «s:','», «:cperl-array-face:@types» ), $ors );
+
+    «k:return»;
+}
+
+«m:# »«x:Set default colors, load Term::ANSIColor
+»«k:sub» «f:load_colors» {
+    «k:eval» «s:'use Term::ANSIColor 1.10 ()'»;
+    «k:eval» «s:'use Win32::Console::ANSI'» «k:if» $App::Ack::is_windows;
+
+    «:cperl-hash-face:$ENV»{«s:ACK_COLOR_MATCH»}    ||= «s:'black on_yellow'»;
+    «:cperl-hash-face:$ENV»{«s:ACK_COLOR_FILENAME»} ||= «s:'bold green'»;
+    «:cperl-hash-face:$ENV»{«s:ACK_COLOR_LINENO»}   ||= «s:'bold yellow'»;
+
+    «k:return»;
+}
+
+«k:sub» «f:filetypes» {
+    «k:my» ( «v:$resource» ) = «:cperl-array-face:@_»;
+
+    «k:my» «:cperl-array-face:@matches»;
+
+    «k:foreach» «k:my» «v:$k» («:cperl-nonoverridable-face:keys» «:cperl-hash-face:%App::Ack::mappings») {
+        «k:my» «v:$filters» = «:cperl-hash-face:$App::Ack::mappings»{$k};
+
+        «k:foreach» «k:my» «v:$filter» (@{$filters}) {
+            «m:# »«x:clone the resource
+»            «k:my» «v:$clone» = $resource->clone;
+            «k:if» ( $filter->filter($clone) ) {
+                «:cperl-nonoverridable-face:push» «:cperl-array-face:@matches», $k;
+                «k:last»;
+            }
+        }
+    }
+
+    «m:# »«x:http://search.cpan.org/dist/Perl-Critic/lib/Perl/Critic/Policy/Subroutines/ProhibitReturnSort.pm
+»    «:cperl-array-face:@matches» = «:cperl-nonoverridable-face:sort» «:cperl-array-face:@matches»;
+    «k:return» «:cperl-array-face:@matches»;
+}
+
+«m:# »«x:Returns a (fairly) unique identifier for a file.
+»«m:# »«x:Use this function to compare two files to see if they're
+»«m:# »«x:equal (ie. the same file, but with a different path/links/etc).
+»«k:sub» «f:get_file_id» {
+    «k:my» ( «v:$filename» ) = «:cperl-array-face:@_»;
+
+    «k:if» ( $App::Ack::is_windows ) {
+        «k:return» File::Next::reslash( $filename );
+    }
+    «k:else» {
+        «m:# »«x:XXX is this the best method? it always hits the FS
+»        «k:if»( «k:my» ( «v:$dev», «v:$inode» ) = («t:stat»($filename))[0, 1] ) {
+            «k:return» «t:join»(«s:':'», $dev, $inode);
+        }
+        «k:else» {
+            «m:# »«x:XXX this could be better
+»            «k:return» $filename;
+        }
+    }
+}
+
+«m:# »«x:Returns a regex object based on a string and command-line options.
+»«m:# »«x:Dies when the regex $str is undefined (i.e. not given on command line).
+»
+«k:sub» «f:build_regex» {
+    «k:my» «v:$str» = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$opt» = «:cperl-nonoverridable-face:shift»;
+
+    «:cperl-nonoverridable-face:defined» $str «t:or» App::Ack::«k:die»( «s:'No regular expression found.'» );
+
+    $str = «t:quotemeta»( $str ) «k:if» $opt->{«s:Q»};
+    «k:if» ( $opt->{«s:w»} ) {
+        «k:my» «v:$pristine_str» = $str;
+
+        $str = «s:"(?:$str)"»;
+        $str = «s:"\\b$str"» «k:if» $pristine_str =~ «c:/»«f:^»«b:\»«t:w»«c:/»;
+        $str = «s:"$str\\b"» «k:if» $pristine_str =~ «c:/»«b:\»«t:w»«f:$»«c:/»;
+    }
+
+    «k:my» «v:$regex_is_lc» = $str «t:eq» «t:lc» $str;
+    «k:if» ( $opt->{«s:i»} || ($opt->{«s:smart_case»} && $regex_is_lc) ) {
+        $str = «s:"(?i)$str"»;
+    }
+
+    «k:my» «v:$re» = «k:eval» { «:cperl-nonoverridable-face:qr»«c:/»«v:$str»«c:/» };
+    «k:if» ( «n:!»$re ) {
+        «k:die» «s:"Invalid regex '$str':\n  $@"»;
+    }
+
+    «k:return» $re;
+
+}
+
+{
+
+«k:my» «:cperl-array-face:@before_ctx_lines»;
+«k:my» «:cperl-array-face:@after_ctx_lines»;
+«k:my» «v:$is_iterating»;
+
+«k:my» «v:$has_printed_something»;
+
+«k:BEGIN» {
+    $has_printed_something = 0;
+}
+
+«k:sub» «f:print_matches_in_resource» {
+    «k:my» ( «v:$resource», «v:$opt» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$passthru»       = $opt->{«s:passthru»};
+    «k:my» «v:$max_count»      = $opt->{«s:m»} || -1;
+    «k:my» «v:$nmatches»       = 0;
+    «k:my» «v:$filename»       = $resource->name;
+    «k:my» «v:$break»          = $opt->{«s:break»};
+    «k:my» «v:$heading»        = $opt->{«s:heading»};
+    «k:my» «v:$ors»            = $opt->{«s:print0»} ? «s:"\0"» : «s:"\n"»;
+    «k:my» «v:$color»          = $opt->{«s:color»};
+    «k:my» «v:$print_filename» = $opt->{«s:show_filename»};
+
+    «k:my» «v:$has_printed_for_this_resource» = 0;
+
+    $is_iterating = 1;
+
+    «k:local» «v:$opt»->{«s:before_context»} = $opt->{«s:output»} ? 0 : $opt->{«s:before_context»};
+    «k:local» «v:$opt»->{«s:after_context»}  = $opt->{«s:output»} ? 0 : $opt->{«s:after_context»};
+
+    «k:my» «v:$n_before_ctx_lines» = $opt->{«s:before_context»} || 0;
+    «k:my» «v:$n_after_ctx_lines»  = $opt->{«s:after_context»}  || 0;
+
+    «:cperl-array-face:@after_ctx_lines» = «:cperl-array-face:@before_ctx_lines» = ();
+
+    «k:my» «v:$fh» = $resource->«t:open»();
+    «k:if» ( «n:!»$fh ) {
+        «k:if» ( $App::Ack::report_bad_filenames ) {
+            App::Ack::«t:warn»( «s:"$filename: $!"» );
+        }
+        «k:return» 0;
+    }
+
+    «k:my» «v:$display_filename» = $filename;
+    «k:if» ( $print_filename && $heading && $color ) {
+        $display_filename = Term::ANSIColor::colored($display_filename, «:cperl-hash-face:$ENV»{«s:ACK_COLOR_FILENAME»});
+    }
+
+    «m:# »«x:check for context before the main loop, so we don't
+»    «m:# »«x:pay for it if we don't need it
+»    «k:if» ( $n_before_ctx_lines || $n_after_ctx_lines ) {
+        «k:my» «v:$current_line» = <$fh>; «m:# »«x:prime the first line of input
+»
+        «k:while» ( «:cperl-nonoverridable-face:defined» $current_line ) {
+            «k:while» ( («:cperl-array-face:@after_ctx_lines» < $n_after_ctx_lines) && «:cperl-nonoverridable-face:defined»($_ = <$fh>) ) {
+                «:cperl-nonoverridable-face:push» «:cperl-array-face:@after_ctx_lines», $_;
+            }
+
+            «k:local» «v:$_» = $current_line;
+            «k:my» «v:$former_dot_period» = $.;
+            $. -= «:cperl-array-face:@after_ctx_lines»;
+
+            «k:if» ( does_match($opt, $_) ) {
+                «k:if» ( «n:!»$has_printed_for_this_resource ) {
+                    «k:if» ( $break && $has_printed_something ) {
+                        App::Ack::print_blank_line();
+                    }
+                    «k:if» ( $print_filename && $heading ) {
+                        App::Ack::print_filename( $display_filename, $ors );
+                    }
+                }
+                print_line_with_context($opt, $filename, $_, $.);
+                $has_printed_for_this_resource = 1;
+                $nmatches++;
+                $max_count--;
+            }
+            «k:elsif» ( $passthru ) {
+                «:cperl-nonoverridable-face:chomp»; «m:# »«x:XXX proper newline handling?
+»                «m:# »«x:XXX inline this call?
+»                «k:if» ( $break && «n:!»$has_printed_for_this_resource && $has_printed_something ) {
+                    App::Ack::print_blank_line();
+                }
+                print_line_with_options($opt, $filename, $_, $., «s:':'»);
+                $has_printed_for_this_resource = 1;
+            }
+            «k:last» «k:unless» $max_count «n:!»= 0;
+
+            «m:# »«x:I tried doing this with local(), but for some reason,
+»            «m:# »«x:$. continued to have its new value after the exit of the
+»            «m:# »«x:enclosing block.  I'm guessing that $. has some extra
+»            «m:# »«x:magic associated with it or something.  If someone can
+»            «m:# »«x:tell me why this happened, I would love to know!
+»            $. = $former_dot_period; «m:# »«x:XXX this won't happen on an exception
+»
+            «k:if» ( $n_before_ctx_lines ) {
+                «:cperl-nonoverridable-face:push» «:cperl-array-face:@before_ctx_lines», $current_line;
+                «:cperl-nonoverridable-face:shift» «:cperl-array-face:@before_ctx_lines» «k:while» «:cperl-array-face:@before_ctx_lines» > $n_before_ctx_lines;
+            }
+            «k:if» ( $n_after_ctx_lines ) {
+                $current_line = «:cperl-nonoverridable-face:shift» «:cperl-array-face:@after_ctx_lines»;
+            }
+            «k:else» {
+                $current_line = <$fh>;
+            }
+        }
+    }
+    «k:else» {
+        «k:local» «v:$_»;
+
+        «k:while» ( <$fh> ) {
+            «k:if» ( does_match($opt, $_) ) {
+                «k:if» ( «n:!»$has_printed_for_this_resource ) {
+                    «k:if» ( $break && $has_printed_something ) {
+                        App::Ack::print_blank_line();
+                    }
+                    «k:if» ( $print_filename && $heading ) {
+                        App::Ack::print_filename( $display_filename, $ors );
+                    }
+                }
+                print_line_with_context($opt, $filename, $_, $.);
+                $has_printed_for_this_resource = 1;
+                $nmatches++;
+                $max_count--;
+            }
+            «k:elsif» ( $passthru ) {
+                «:cperl-nonoverridable-face:chomp»; «m:# »«x:XXX proper newline handling?
+»                «k:if» ( $break && «n:!»$has_printed_for_this_resource && $has_printed_something ) {
+                    App::Ack::print_blank_line();
+                }
+                print_line_with_options($opt, $filename, $_, $., «s:':'»);
+                $has_printed_for_this_resource = 1;
+            }
+            «k:last» «k:unless» $max_count «n:!»= 0;
+        }
+    }
+
+    $is_iterating = 0; «m:# »«x:XXX this won't happen on an exception
+»                       «m:#     »«x:then again, do we care? ack doesn't really
+»                       «m:#     »«x:handle exceptions anyway.
+»
+    «k:return» $nmatches;
+}
+
+«k:sub» «f:print_line_with_options» {
+    «k:my» ( «v:$opt», «v:$filename», «v:$line», «v:$line_no», «v:$separator» ) = «:cperl-array-face:@_»;
+
+    $has_printed_something = 1;
+
+    «k:my» «v:$print_filename» = $opt->{«s:show_filename»};
+    «k:my» «v:$print_column»   = $opt->{«s:column»};
+    «k:my» «v:$ors»            = $opt->{«s:print0»} ? «s:"\0"» : «s:"\n"»;
+    «k:my» «v:$heading»        = $opt->{«s:heading»};
+    «k:my» «v:$output_expr»    = $opt->{«s:output»};
+    «k:my» «v:$color»          = $opt->{«s:color»};
+
+    «k:my» «:cperl-array-face:@line_parts»;
+
+    «k:if»( $color ) {
+        $filename = Term::ANSIColor::colored($filename,
+            «:cperl-hash-face:$ENV»{«s:ACK_COLOR_FILENAME»});
+        $line_no  = Term::ANSIColor::colored($line_no,
+            «:cperl-hash-face:$ENV»{«s:ACK_COLOR_LINENO»});
+    }
+
+    «k:if»($print_filename) {
+        «k:if»( $heading ) {
+            «:cperl-nonoverridable-face:push» «:cperl-array-face:@line_parts», $line_no;
+        }
+        «k:else» {
+            «:cperl-nonoverridable-face:push» «:cperl-array-face:@line_parts», $filename, $line_no;
+        }
+
+        «k:if»( $print_column ) {
+            «:cperl-nonoverridable-face:push» «:cperl-array-face:@line_parts», get_match_column();
+        }
+    }
+    «k:if»( $output_expr ) {
+        «k:while» ( $line =~ «c:/»«v:$opt»«s:->{regex}»«c:/»«:cperl-nonoverridable-face:og» ) {
+            «m:# »«x:XXX We need to stop using eval() for --output.  See https://github.com/petdance/ack2/issues/421
+»            «k:my» «v:$output» = «k:eval» $output_expr;
+            App::Ack::«:cperl-nonoverridable-face:print»( «t:join»( $separator, «:cperl-array-face:@line_parts», $output ), $ors );
+        }
+    }
+    «k:else» {
+        «k:if» ( $color ) {
+            $line =~ «c:/»«v:$opt»«s:->{regex}»«c:/»«:cperl-nonoverridable-face:o»; «m:# »«x:this match is redundant, but we need
+»                                       «m:# »«x:to perfom it in order to get if
+»                                       «m:# »«x:capture groups are set
+»
+            «k:if» ( @+ > 1 ) { «m:# »«x:if we have captures
+»                «k:while» ( $line =~ «c:/»«v:$opt»«s:->{regex}»«c:/»«:cperl-nonoverridable-face:og» ) {
+                    «k:my» «v:$offset» = 0; «m:# »«x:additional offset for when we add stuff
+»                    «k:my» «v:$previous_match_end» = 0;
+
+                    «k:for» ( «k:my» «v:$i» = 1; $i < @+; $i++ ) {
+                        «k:my» ( «v:$match_start», «v:$match_end» ) = ( $-[$i], $+[$i] );
+
+                        «k:next» «k:unless» «:cperl-nonoverridable-face:defined»($match_start);
+                        «k:next» «k:if» $match_start < $previous_match_end;
+
+                        «k:my» «v:$substring» = «t:substr»( $line,
+                            $offset + $match_start, $match_end - $match_start );
+                        «k:my» «v:$substitution» = Term::ANSIColor::colored( $substring,
+                            «:cperl-hash-face:$ENV»{«s:ACK_COLOR_MATCH»} );
+
+                        «t:substr»( $line, $offset + $match_start,
+                            $match_end - $match_start, $substitution );
+
+                        $previous_match_end  = $match_end; «m:# »«x:offsets do not need to be applied
+»                        $offset             += «t:length»( $substitution ) - «t:length»( $substring );
+                    }
+
+                    «:cperl-nonoverridable-face:pos»($line) = $+[0] + $offset;
+                }
+            }
+            «k:else» {
+                «k:my» «v:$matched» = 0; «m:# »«x:flag; if matched, need to escape afterwards
+»
+                «k:while» ( $line =~ «c:/»«v:$opt»«s:->{regex}»«c:/»«:cperl-nonoverridable-face:og» ) {
+
+                    $matched = 1;
+                    «k:my» ( «v:$match_start», «v:$match_end» ) = ($-[0], $+[0]);
+                    «k:next» «k:unless» «:cperl-nonoverridable-face:defined»($match_start);
+
+                    «k:my» «v:$substring» = «t:substr»( $line, $match_start,
+                        $match_end - $match_start );
+                    «k:my» «v:$substitution» = Term::ANSIColor::colored( $substring,
+                        «:cperl-hash-face:$ENV»{«s:ACK_COLOR_MATCH»} );
+
+                    «t:substr»( $line, $match_start, $match_end - $match_start,
+                        $substitution );
+
+                    «:cperl-nonoverridable-face:pos»($line) = $match_end +
+                    («t:length»( $substitution ) - «t:length»( $substring ));
+                }
+                «m:# »«x:XXX why do we do this?
+»                $line .= «s:"\033[0m\033[K"» «k:if» $matched;
+            }
+        }
+
+        «:cperl-nonoverridable-face:push» «:cperl-array-face:@line_parts», $line;
+        App::Ack::«:cperl-nonoverridable-face:print»( «t:join»( $separator, «:cperl-array-face:@line_parts» ), $ors );
+    }
+
+    «k:return»;
+}
+
+«k:sub» «f:iterate» {
+    «k:my» ( «v:$resource», «v:$opt», «v:$cb» ) = «:cperl-array-face:@_»;
+
+    $is_iterating = 1;
+
+    «k:local» «v:$opt»->{«s:before_context»} = $opt->{«s:output»} ? 0 : $opt->{«s:before_context»};
+    «k:local» «v:$opt»->{«s:after_context»}  = $opt->{«s:output»} ? 0 : $opt->{«s:after_context»};
+
+    «k:my» «v:$n_before_ctx_lines» = $opt->{«s:before_context»} || 0;
+    «k:my» «v:$n_after_ctx_lines»  = $opt->{«s:after_context»}  || 0;
+
+    «:cperl-array-face:@after_ctx_lines» = «:cperl-array-face:@before_ctx_lines» = ();
+
+    «k:my» «v:$fh» = $resource->«t:open»();
+    «k:if» ( «n:!»$fh ) {
+        «k:if» ( $App::Ack::report_bad_filenames ) {
+            App::Ack::«t:warn»( $resource->name . «s:': '» . $! );
+        }
+        «k:return»;
+    }
+
+    «m:# »«x:Check for context before the main loop, so we don't pay for it if we don't need it.
+»    «k:if» ( $n_before_ctx_lines || $n_after_ctx_lines ) {
+        «k:my» «v:$current_line» = <$fh>; «m:# »«x:prime the first line of input
+»
+        «k:while» ( «:cperl-nonoverridable-face:defined» $current_line ) {
+            «k:while» ( («:cperl-array-face:@after_ctx_lines» < $n_after_ctx_lines) && «:cperl-nonoverridable-face:defined»($_ = <$fh>) ) {
+                «:cperl-nonoverridable-face:push» «:cperl-array-face:@after_ctx_lines», $_;
+            }
+
+            «k:local» «v:$_» = $current_line;
+            «k:my» «v:$former_dot_period» = $.;
+            $. -= «:cperl-array-face:@after_ctx_lines»;
+
+            «k:last» «k:unless» $cb->();
+
+            «m:# »«x:I tried doing this with local(), but for some reason,
+»            «m:# »«x:$. continued to have its new value after the exit of the
+»            «m:# »«x:enclosing block.  I'm guessing that $. has some extra
+»            «m:# »«x:magic associated with it or something.  If someone can
+»            «m:# »«x:tell me why this happened, I would love to know!
+»            $. = $former_dot_period; «m:# »«x:XXX this won't happen on an exception
+»
+            «k:if» ( $n_before_ctx_lines ) {
+                «:cperl-nonoverridable-face:push» «:cperl-array-face:@before_ctx_lines», $current_line;
+                «:cperl-nonoverridable-face:shift» «:cperl-array-face:@before_ctx_lines» «k:while» «:cperl-array-face:@before_ctx_lines» > $n_before_ctx_lines;
+            }
+            «k:if» ( $n_after_ctx_lines ) {
+                $current_line = «:cperl-nonoverridable-face:shift» «:cperl-array-face:@after_ctx_lines»;
+            }
+            «k:else» {
+                $current_line = <$fh>;
+            }
+        }
+    }
+    «k:else» {
+        «k:local» «v:$_»;
+
+        «k:while» ( <$fh> ) {
+            «k:last» «k:unless» $cb->();
+        }
+    }
+
+    $is_iterating = 0; «m:# »«x:XXX this won't happen on an exception
+»                       «m:#     »«x:then again, do we care? ack doesn't really
+»                       «m:#     »«x:handle exceptions anyway.
+»
+    «k:return»;
+}
+
+«k:sub» «f:get_context» {
+    «k:if» ( «t:not» $is_iterating ) {
+        Carp::croak( «s:'get_context() called outside of iterate()'» );
+    }
+
+    «k:return» (
+        «:cperl-nonoverridable-face:scalar»(«:cperl-array-face:@before_ctx_lines») ? \«:cperl-array-face:@before_ctx_lines» : «:cperl-nonoverridable-face:undef»,
+        «:cperl-nonoverridable-face:scalar»(«:cperl-array-face:@after_ctx_lines»)  ? \«:cperl-array-face:@after_ctx_lines»  : «:cperl-nonoverridable-face:undef»,
+    );
+}
+
+}
+
+{
+
+«k:my» «v:$is_first_match»;
+«k:my» «v:$previous_file_processed»;
+«k:my» «v:$previous_line_printed»;
+
+«k:BEGIN» {
+    $is_first_match        = 1;
+    $previous_line_printed = -1;
+}
+
+«k:sub» «f:print_line_with_context» {
+    «k:my» ( «v:$opt», «v:$filename», «v:$matching_line», «v:$line_no» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$heading» = $opt->{«s:heading»};
+
+    «k:if»( «n:!»«:cperl-nonoverridable-face:defined»($previous_file_processed) ||
+      $previous_file_processed «t:ne» $filename ) {
+        $previous_file_processed = $filename;
+        $previous_line_printed   = -1;
+
+        «k:if»( $heading ) {
+            $is_first_match = 1;
+        }
+    }
+
+    «k:my» «v:$ors»                 = $opt->{«s:print0»} ? «s:"\0"» : «s:"\n"»;
+    «k:my» «v:$match_word»          = $opt->{«s:w»};
+    «k:my» «v:$is_tracking_context» = $opt->{«s:after_context»} || $opt->{«s:before_context»};
+    «k:my» «v:$output_expr»         = $opt->{«s:output»};
+
+    $matching_line =~ «:cperl-nonoverridable-face:s»«c:/»«f:[»«s:\r\n»«f:]»«b:+»«f:$»«c:/»/«:cperl-nonoverridable-face:g»;
+
+    «k:my» ( «v:$before_context», «v:$after_context» ) = get_context();
+
+    «k:if» ( $before_context ) {
+        «k:my» «v:$first_line» = $. - @{$before_context};
+
+        «k:if» ( $first_line <= $previous_line_printed ) {
+            «:cperl-nonoverridable-face:splice» @{$before_context}, 0, $previous_line_printed - $first_line + 1;
+            $first_line = $. - @{$before_context};
+        }
+        «k:if» ( @{$before_context} ) {
+            «k:my» «v:$offset» = @{$before_context};
+
+            «k:if»( «n:!»$is_first_match && $previous_line_printed «n:!»= $first_line - 1 ) {
+                App::Ack::«:cperl-nonoverridable-face:print»(«s:'--'», $ors);
+            }
+            «k:foreach» «k:my» «v:$line» (@{$before_context}) {
+                «k:my» «v:$context_line_no» = $. - $offset;
+                «k:if» ( $context_line_no <= $previous_line_printed ) {
+                    «k:next»;
+                }
+
+                «:cperl-nonoverridable-face:chomp» $line;
+                «k:local» «v:$opt»->{«s:column»};
+
+                print_line_with_options($opt, $filename, $line, $context_line_no, «s:'-'»);
+                $previous_line_printed = $context_line_no;
+                $offset--;
+            }
+        }
+    }
+
+    «k:if» ( $. > $previous_line_printed ) {
+        «k:if»( $is_tracking_context && «n:!»$is_first_match && $previous_line_printed «n:!»= $. - 1 ) {
+            App::Ack::«:cperl-nonoverridable-face:print»(«s:'--'», $ors);
+        }
+
+        print_line_with_options($opt, $filename, $matching_line, $line_no, «s:':'»);
+        $previous_line_printed = $.;
+    }
+
+    «k:if»($after_context) {
+        «k:my» «v:$offset» = 1;
+        «k:foreach» «k:my» «v:$line» (@{$after_context}) {
+            «m:# »«x:XXX improve this!
+»            «k:if» ( $previous_line_printed >= $. + $offset ) {
+                $offset++;
+                «k:next»;
+            }
+            «:cperl-nonoverridable-face:chomp» $line;
+
+            «k:if» ( $opt->{«s:regex»} && does_match( $opt, $line ) ) {
+                print_line_with_options($opt, $filename, $line, $. + $offset, «s:':'»);
+            }
+            «k:else» {
+                «k:local» «v:$opt»->{«s:column»};
+                print_line_with_options($opt, $filename, $line, $. + $offset, «s:'-'»);
+            }
+            $previous_line_printed = $. + $offset;
+            $offset++;
+        }
+    }
+
+    $is_first_match = 0;
+
+    «k:return»;
+}
+
+}
+
+{
+
+«k:my» «v:$match_column_number»;
+
+«m:# »«x:does_match() MUST have an $opt->{»«s:regex»«x:} set.
+»
+«k:sub» «f:does_match» {
+    «k:my» ( «v:$opt», «v:$line» ) = «:cperl-array-face:@_»;
+
+    $match_column_number = «:cperl-nonoverridable-face:undef»;
+
+    «k:if» ( $opt->{«s:v»} ) {
+        «k:return» ( $line «n:!»~ «c:/»«v:$opt»«s:->{regex}»«c:/»«:cperl-nonoverridable-face:o» );
+    }
+    «k:else» {
+        «k:if» ( $line =~ «c:/»«v:$opt»«s:->{regex}»«c:/»«:cperl-nonoverridable-face:o» ) {
+            «m:# »«x:@- = »«:cperl-array-face:@LAST_MATCH_START»«x:
+»            «m:# »«x:@+ = »«:cperl-array-face:@LAST_MATCH_END»«x:
+»            $match_column_number = $-[0] + 1;
+            «k:return» 1;
+        }
+        «k:else» {
+            «k:return»;
+        }
+    }
+}
+
+«k:sub» «f:get_match_column» {
+    «k:return» $match_column_number;
+}
+
+}
+
+«k:sub» «f:resource_has_match» {
+    «k:my» ( «v:$resource», «v:$opt» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$has_match» = 0;
+    «k:my» «v:$fh» = $resource->«t:open»();
+    «k:if» ( «n:!»$fh ) {
+        «k:if» ( $App::Ack::report_bad_filenames ) {
+            App::Ack::«t:warn»( $resource->name . «s:': '» . $! );
+        }
+    }
+    «k:else» {
+        «k:my» «v:$re» = $opt->{«s:regex»};
+        «k:if» ( $opt->{«s:v»} ) {
+            «k:while» ( <$fh> ) {
+                «k:if» («n:!»«c:/»«v:$re»«c:/»«:cperl-nonoverridable-face:o») {
+                    $has_match = 1;
+                    «k:last»;
+                }
+            }
+        }
+        «k:else» {
+            «m:# »«x:XXX read in chunks
+»            «m:# »«x:XXX only do this for certain file sizes?
+»            «k:my» «v:$content» = «k:do» {
+                «k:local» «v:$/»;
+                <$fh>;
+            };
+            $has_match = $content =~ «c:/»«v:$re»«c:/»«:cperl-nonoverridable-face:og»;
+        }
+        «t:close» $fh;
+    }
+
+    «k:return» $has_match;
+}
+
+«k:sub» «f:count_matches_in_resource» {
+    «k:my» ( «v:$resource», «v:$opt» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$nmatches» = 0;
+    «k:my» «v:$fh» = $resource->«t:open»();
+    «k:if» ( «n:!»$fh ) {
+        «k:if» ( $App::Ack::report_bad_filenames ) {
+            App::Ack::«t:warn»( $resource->name . «s:': '» . $! );
+        }
+    }
+    «k:else» {
+        «k:my» «v:$re» = $opt->{«s:regex»};
+        «k:if» ( $opt->{«s:v»} ) {
+            «k:while» ( <$fh> ) {
+                ++$nmatches «k:if» («n:!»«c:/»«v:$re»«c:/»«:cperl-nonoverridable-face:o»);
+            }
+        }
+        «k:else» {
+            «k:my» «v:$content» = «k:do» {
+                «k:local» «v:$/»;
+                <$fh>;
+            };
+            $nmatches =()= ($content =~ «c:/»«v:$re»«c:/»«:cperl-nonoverridable-face:og»);
+        }
+        «t:close» $fh;
+    }
+
+    «k:return» $nmatches;
+}
+
+«k:sub» «f:main» {
+    «k:my» «:cperl-array-face:@arg_sources» = App::Ack::ConfigLoader::retrieve_arg_sources();
+
+    «k:my» «v:$opt» = App::Ack::ConfigLoader::process_args( «:cperl-array-face:@arg_sources» );
+
+    $App::Ack::report_bad_filenames = «n:!»$opt->{«s:dont_report_bad_filenames»};
+
+    «k:if» ( $opt->{«s:flush»} ) {
+        $| = 1;
+    }
+
+    «k:if» ( «n:!»«:cperl-nonoverridable-face:defined»($opt->{«s:color»}) && «n:!»$opt->{«s:g»} ) {
+        «k:my» «v:$windows_color» = 1;
+        «k:if» ( $App::Ack::is_windows ) {
+            $windows_color = «k:eval» { «k:require» «f:Win32::Console::ANSI»; };
+        }
+        $opt->{«s:color»} = «n:!»App::Ack::output_to_pipe() && $windows_color;
+    }
+    «k:if» ( «t:not» «:cperl-nonoverridable-face:defined» $opt->{«s:heading»} «t:and» «t:not» «:cperl-nonoverridable-face:defined» $opt->{«s:break»}  ) {
+        $opt->{«s:heading»} = $opt->{«s:break»} = «n:!»App::Ack::output_to_pipe();
+    }
+
+    «k:if» ( «:cperl-nonoverridable-face:defined»($opt->{«s:H»}) || «:cperl-nonoverridable-face:defined»($opt->{«s:h»}) ) {
+        $opt->{«s:show_filename»}= $opt->{«s:H»} && «n:!»$opt->{«s:h»};
+    }
+
+    «k:if» ( «k:my» «v:$output» = $opt->{«s:output»} ) {
+        $output        =~ «:cperl-nonoverridable-face:s»«c:{»«b:\»«s:\»«c:}{»«s:\\\\»«c:}»«:cperl-nonoverridable-face:g»;
+        $output        =~ «:cperl-nonoverridable-face:s»«c:{»«s:"»«c:}{»«s:\\"»«c:}»«:cperl-nonoverridable-face:g»;
+        $opt->{«s:output»} = «:cperl-nonoverridable-face:qq»«s:{"$output"}»;
+    }
+
+    «k:my» «v:$resources»;
+    «k:if» ( $App::Ack::is_filter_mode && «n:!»$opt->{«s:files_from»} ) { «m:# »«x:probably -x
+»        $resources    = App::Ack::Resources->from_stdin( $opt );
+        «k:my» «v:$regex» = $opt->{«s:regex»};
+        $regex = «:cperl-nonoverridable-face:shift» «:cperl-array-face:@ARGV» «k:if» «t:not» «:cperl-nonoverridable-face:defined» $regex;
+        $opt->{«s:regex»} = build_regex( $regex, $opt );
+    }
+    «k:else» {
+        «k:if» ( $opt->{«s:f»} || $opt->{«s:lines»} ) {
+            «k:if» ( $opt->{«s:regex»} ) {
+                App::Ack::«t:warn»( «s:"regex ($opt->{regex}) specified with -f or --lines"» );
+                App::Ack::exit_from_ack( 0 ); «m:# »«x:XXX the 0 is misleading
+»            }
+        }
+        «k:else» {
+            «k:my» «v:$regex» = $opt->{«s:regex»};
+            $regex = «:cperl-nonoverridable-face:shift» «:cperl-array-face:@ARGV» «k:if» «t:not» «:cperl-nonoverridable-face:defined» $regex;
+            $opt->{«s:regex»} = build_regex( $regex, $opt );
+        }
+        «k:my» «:cperl-array-face:@start»;
+        «k:if» ( «t:not» «:cperl-nonoverridable-face:defined» $opt->{«s:files_from»} ) {
+            «:cperl-array-face:@start» = «:cperl-array-face:@ARGV»;
+        }
+        «k:if» ( «n:!»«:cperl-nonoverridable-face:exists»($opt->{«s:show_filename»}) ) {
+            «k:unless»(«:cperl-array-face:@start» == 1 && «n:!»(«f:-d» «:cperl-array-face:$start»[0])) {
+                $opt->{«s:show_filename»} = 1;
+            }
+        }
+
+        «k:if» ( «:cperl-nonoverridable-face:defined» $opt->{«s:files_from»} ) {
+            $resources = App::Ack::Resources->from_file( $opt, $opt->{«s:files_from»} );
+            «k:exit» 1 «k:unless» $resources;
+        }
+        «k:else» {
+            «:cperl-array-face:@start» = («s:'.'») «k:unless» «:cperl-array-face:@start»;
+            «k:foreach» «k:my» «v:$target» («:cperl-array-face:@start») {
+                «k:if» ( «n:!»«f:-e» $target && $App::Ack::report_bad_filenames) {
+                    App::Ack::«t:warn»( «s:"$target: No such file or directory"» );
+                }
+            }
+
+            $opt->{«s:file_filter»}    = _compile_file_filter($opt, \«:cperl-array-face:@start»);
+            $opt->{«s:descend_filter»} = _compile_descend_filter($opt);
+
+            $resources = App::Ack::Resources->from_argv( $opt, \«:cperl-array-face:@start» );
+        }
+    }
+    App::Ack::set_up_pager( $opt->{«s:pager»} ) «k:if» «:cperl-nonoverridable-face:defined» $opt->{«s:pager»};
+
+    «k:my» «v:$print_filenames» = $opt->{«s:show_filename»};
+    «k:my» «v:$max_count»       = $opt->{«s:m»};
+    «k:my» «v:$ors»             = $opt->{«s:print0»} ? «s:"\0"» : «s:"\n"»;
+    «k:my» «v:$only_first»      = $opt->{«s:1»};
+
+    «k:my» «v:$nmatches»    = 0;
+    «k:my» «v:$total_count» = 0;
+«c:RESOURCES:»
+    «k:while» ( «k:my» «v:$resource» = $resources->«k:next» ) {
+        «m:# »«x:XXX Combine the -f and -g functions
+»        «k:if» ( $opt->{«s:f»} ) {
+            «m:# »«x:XXX printing should probably happen inside of App::Ack
+»            «k:if» ( $opt->{«s:show_types»} ) {
+                show_types( $resource, $ors );
+            }
+            «k:else» {
+                App::Ack::«:cperl-nonoverridable-face:print»( $resource->name, $ors );
+            }
+            ++$nmatches;
+            «k:last» «c:RESOURCES» «k:if» «:cperl-nonoverridable-face:defined»($max_count) && $nmatches >= $max_count;
+        }
+        «k:elsif» ( $opt->{«s:g»} ) {
+            «k:if» ( $opt->{«s:show_types»} ) {
+                show_types( $resource, $ors );
+            }
+            «k:else» {
+                «k:local» «v:$opt»->{«s:show_filename»} = 0; «m:# »«x:XXX Why is this local?
+»
+                print_line_with_options($opt, «s:''», $resource->name, 0, $ors);
+            }
+            ++$nmatches;
+            «k:last» «c:RESOURCES» «k:if» «:cperl-nonoverridable-face:defined»($max_count) && $nmatches >= $max_count;
+        }
+        «k:elsif» ( $opt->{«s:lines»} ) {
+            «k:my» «v:$print_filename» = $opt->{«s:show_filename»};
+            «k:my» «v:$passthru»       = $opt->{«s:passthru»};
+
+            «k:my» «:cperl-hash-face:%line_numbers»;
+            «k:foreach» «k:my» «v:$line» ( @{ $opt->{«s:lines»} } ) {
+                «k:my» «:cperl-array-face:@lines»             = «:cperl-nonoverridable-face:split» «c:/»«s:,»«c:/», $line;
+                «:cperl-array-face:@lines»                = «:cperl-nonoverridable-face:map» {
+                    «c:/»«f:^»«k:(»«b:\»«t:d»«b:+»«k:)»«s:-»«k:(»«b:\»«t:d»«b:+»«k:)»«f:$»«c:/»
+                        ? ( $1 .. $2 )
+                        : $_
+                } «:cperl-array-face:@lines»;
+                «:cperl-hash-face:@line_numbers»{«:cperl-array-face:@lines»} = (1) «t:x» «:cperl-array-face:@lines»;
+            }
+
+            «k:my» «v:$filename» = $resource->name;
+
+            «k:local» «v:$opt»->{«s:color»} = 0;
+
+            iterate($resource, $opt, «k:sub» {
+                «:cperl-nonoverridable-face:chomp»;
+
+                «k:if» ( «:cperl-hash-face:$line_numbers»{$.} ) {
+                    print_line_with_context($opt, $filename, $_, $.);
+                }
+                «k:elsif» ( $passthru ) {
+                    print_line_with_options($opt, $filename, $_, $., «s:':'»);
+                }
+                «k:return» 1;
+            });
+        }
+        «k:elsif» ( $opt->{«s:count»} ) {
+            «k:my» «v:$matches_for_this_file» = count_matches_in_resource( $resource, $opt );
+
+            «k:if» ( «t:not» $opt->{«s:show_filename»} ) {
+                $total_count += $matches_for_this_file;
+                «k:next» «c:RESOURCES»;
+            }
+
+            «k:if» ( «n:!»$opt->{«s:l»} || $matches_for_this_file > 0) {
+                «k:if» ( $print_filenames ) {
+                    App::Ack::«:cperl-nonoverridable-face:print»( $resource->name, «s:':'», $matches_for_this_file, $ors );
+                }
+                «k:else» {
+                    App::Ack::«:cperl-nonoverridable-face:print»( $matches_for_this_file, $ors );
+                }
+            }
+        }
+        «k:elsif» ( $opt->{«s:l»} || $opt->{«s:L»} ) {
+            «k:my» «v:$is_match» = resource_has_match( $resource, $opt );
+
+            «k:if» ( $opt->{«s:L»} ? «n:!»$is_match : $is_match ) {
+                App::Ack::«:cperl-nonoverridable-face:print»( $resource->name, $ors );
+                ++$nmatches;
+
+                «k:last» «c:RESOURCES» «k:if» $only_first;
+                «k:last» «c:RESOURCES» «k:if» «:cperl-nonoverridable-face:defined»($max_count) && $nmatches >= $max_count;
+            }
+        }
+        «k:else» {
+            $nmatches += print_matches_in_resource( $resource, $opt );
+            «k:if» ( $nmatches && $only_first ) {
+                «k:last» «c:RESOURCES»;
+            }
+        }
+    }
+
+    «k:if» ( $opt->{«s:count»} && «n:!»$opt->{«s:show_filename»} ) {
+        App::Ack::«:cperl-nonoverridable-face:print»( $total_count, «s:"\n"» );
+    }
+
+    «t:close» $App::Ack::fh;
+    App::Ack::exit_from_ack( $nmatches );
+}
+
+
+«x:
+=head1 »«v:NAME»«x:
+
+ack - grep-like text finder
+
+=head1 »«v:SYNOPSIS»«x:
+
+    ack [options] PATTERN [FILE...]
+    ack -f [options] [DIRECTORY...]
+
+=head1 »«v:DESCRIPTION»«x:
+
+Ack is designed as an alternative to F<grep> for programmers.
+
+Ack searches the named input FILEs (or standard input if no files
+are named, or the file name - is given) for lines containing a match
+to the given PATTERN.  By default, ack prints the matching lines.
+
+PATTERN is a Perl regular expression.  Perl regular expressions
+are commonly found in other programming languages, but for the particulars
+of their behavior, please consult
+L<http://perldoc.perl.org/perlreref.html|perlreref>.  If you don't know
+how to use regular expression but are interested in learning, you may
+consult L<http://perldoc.perl.org/perlretut.html|perlretut>.  If you do not
+need or want ack to use regular expressions, please see the
+C<-Q>/C<--literal> option.
+
+Ack can also list files that would be searched, without actually
+searching them, to let you take advantage of ack's file-type filtering
+capabilities.
+
+=head1 »«v:FILE SELECTION»«x:
+
+If files are not specified for searching, either on the command
+line or piped in with the C<-x> option, I<ack> delves into
+subdirectories selecting files for searching.
+
+I<ack> is intelligent about the files it searches.  It knows about
+certain file types, based on both the extension on the file and,
+in some cases, the contents of the file.  These selections can be
+made with the B<--type> option.
+
+With no file selection, I<ack> searches through regular files that
+are not explicitly excluded by B<--ignore-dir> and B<--ignore-file>
+options, either present in F<ackrc> files or on the command line.
+
+The default options for I<ack> ignore certain files and directories.  These
+include:
+
+=over »«v:4»«x:
+
+=item »«v:* Backup files: Files matching F<#*#> or ending with F<~>.»«x:
+
+=item »«v:* Coredumps: Files matching F<core.\d+>»«x:
+
+=item »«v:* Version control directories like F<.svn> and F<.git>.»«x:
+
+=back
+
+Run I<ack> with the C<--dump> option to see what settings are set.
+
+However, I<ack> always searches the files given on the command line,
+no matter what type.  If you tell I<ack> to search in a coredump,
+it will search in a coredump.
+
+=head1 »«v:DIRECTORY SELECTION»«x:
+
+I<ack> descends through the directory tree of the starting directories
+specified.  If no directories are specified, the current working directory is
+used.  However, it will ignore the shadow directories used by
+many version control systems, and the build directories used by the
+Perl MakeMaker system.  You may add or remove a directory from this
+list with the B<--[no]ignore-dir> option. The option may be repeated
+to add/remove multiple directories from the ignore list.
+
+For a complete list of directories that do not get searched, run
+C<ack --dump>.
+
+=head1 »«v:WHEN TO USE GREP»«x:
+
+I<ack> trumps I<grep> as an everyday tool 99% of the time, but don't
+throw I<grep> away, because there are times you'll still need it.
+
+E.g., searching through huge files looking for regexes that can be
+expressed with I<grep> syntax should be quicker with I<grep>.
+
+If your script or parent program uses I<grep> C<--quiet> or C<--silent>
+or needs exit 2 on IO error, use I<grep>.
+
+=head1 »«v:OPTIONS»«x:
+
+=over »«v:4»«x:
+
+=item »«v:B<--ackrc>»«x:
+
+Specifies an ackrc file to load after all others; see L</"ACKRC LOCATION SEMANTICS">.
+
+=item »«v:B<-A I<NUM>>, B<--after-context=I<NUM>>»«x:
+
+Print I<NUM> lines of trailing context after matching lines.
+
+=item »«v:B<-B I<NUM>>, B<--before-context=I<NUM>>»«x:
+
+Print I<NUM> lines of leading context before matching lines.
+
+=item »«v:B<--[no]break>»«x:
+
+Print a break between results from different files. On by default
+when used interactively.
+
+=item »«v:B<-C [I<NUM>]>, B<--context[=I<NUM>]>»«x:
+
+Print I<NUM> lines (default 2) of context around matching lines.
+
+=item »«v:B<-c>, B<--count>»«x:
+
+Suppress normal output; instead print a count of matching lines for
+each input file.  If B<-l> is in effect, it will only show the
+number of lines for each file that has lines matching.  Without
+B<-l>, some line counts may be zeroes.
+
+If combined with B<-h> (B<--no-filename>) ack outputs only one total
+count.
+
+=item »«v:B<--[no]color>, B<--[no]colour>»«x:
+
+B<--color> highlights the matching text.  B<--nocolor> suppresses
+the color.  This is on by default unless the output is redirected.
+
+On Windows, this option is off by default unless the
+L<Win32::Console::ANSI> module is installed or the C<ACK_PAGER_COLOR>
+environment variable is used.
+
+=item »«v:B<--color-filename=I<color>>»«x:
+
+Sets the color to be used for filenames.
+
+=item »«v:B<--color-match=I<color>>»«x:
+
+Sets the color to be used for matches.
+
+=item »«v:B<--color-lineno=I<color>>»«x:
+
+Sets the color to be used for line numbers.
+
+=item »«v:B<--[no]column>»«x:
+
+Show the column number of the first match.  This is helpful for
+editors that can place your cursor at a given position.
+
+=item »«v:B<--create-ackrc>»«x:
+
+Dumps the default ack options to standard output.  This is useful for
+when you want to customize the defaults.
+
+=item »«v:B<--dump>»«x:
+
+Writes the list of options loaded and where they came from to standard
+output.  Handy for debugging.
+
+=item »«v:B<--[no]env>»«x:
+
+B<--noenv> disables all environment processing. No F<.ackrc> is
+read and all environment variables are ignored. By default, F<ack>
+considers F<.ackrc> and settings in the environment.
+
+=item »«v:B<--flush>»«x:
+
+B<--flush> flushes output immediately.  This is off by default
+unless ack is running interactively (when output goes to a pipe or
+file).
+
+=item »«v:B<-f>»«x:
+
+Only print the files that would be searched, without actually doing
+any searching.  PATTERN must not be specified, or it will be taken
+as a path to search.
+
+=item »«v:B<--files-from=I<FILE>>»«x:
+
+The list of files to be searched is specified in I<FILE>.  The list of
+files are separated by newlines.  If I<FILE> is C<->, the list is loaded
+from standard input.
+
+=item »«v:B<--[no]filter>»«x:
+
+Forces ack to act as if it were receiving input via a pipe.
+
+=item »«v:B<--[no]follow>»«x:
+
+Follow or don't follow symlinks, other than whatever starting files
+or directories were specified on the command line.
+
+This is off by default.
+
+=item »«v:B<-g I<PATTERN>>»«x:
+
+Print files where the relative path + filename matches I<PATTERN>.
+This option can be combined with B<--color> to make it easier to spot
+the match.
+
+=item »«v:B<--[no]group>»«x:
+
+B<--group> groups matches by file name.  This is the default
+when used interactively.
+
+B<--nogroup> prints one result per line, like grep.  This is the
+default when output is redirected.
+
+=item »«v:B<-H>, B<--with-filename>»«x:
+
+Print the filename for each match. This is the default unless searching
+a single explicitly specified file.
+
+=item »«v:B<-h>, B<--no-filename>»«x:
+
+Suppress the prefixing of filenames on output when multiple files are
+searched.
+
+=item »«v:B<--[no]heading>»«x:
+
+Print a filename heading above each file's results.  This is the default
+when used interactively.
+
+=item »«v:B<--help>, B<-?>»«x:
+
+Print a short help statement.
+
+=item »«v:B<--help-types>, B<--help=types>»«x:
+
+Print all known types.
+
+=item »«v:B<-i>, B<--ignore-case>»«x:
+
+Ignore case distinctions in PATTERN
+
+=item »«v:B<--ignore-ack-defaults>»«x:
+
+Tells ack to completely ignore the default definitions provided with ack.
+This is useful in combination with B<--create-ackrc> if you I<really> want
+to customize ack.
+
+=item »«v:B<--[no]ignore-dir=I<DIRNAME>>, B<--[no]ignore-directory=I<DIRNAME>>»«x:
+
+Ignore directory (as CVS, .svn, etc are ignored). May be used
+multiple times to ignore multiple directories. For example, mason
+users may wish to include B<--ignore-dir=data>. The B<--noignore-dir>
+option allows users to search directories which would normally be
+ignored (perhaps to research the contents of F<.svn/props> directories).
+
+The I<DIRNAME> must always be a simple directory name. Nested
+directories like F<foo/bar> are NOT supported. You would need to
+specify B<--ignore-dir=foo> and then no files from any foo directory
+are taken into account by ack unless given explicitly on the command
+line.
+
+=item »«v:B<--ignore-file=I<FILTERTYPE:FILTERARGS>>»«x:
+
+Ignore files matching I<FILTERTYPE:FILTERARGS>.  The filters are specified
+identically to file type filters as seen in L</"Defining your own types">.
+
+=item »«v:B<-k>, B<--known-types>»«x:
+
+Limit selected files to those with types that ack knows about.  This is
+equivalent to the default behavior found in ack 1.
+
+=item »«v:B<--lines=I<NUM>>»«x:
+
+Only print line I<NUM> of each file. Multiple lines can be given with multiple
+B<--lines> options or as a comma separated list (B<--lines=3,5,7>). B<--lines=4-7>
+also works. The lines are always output in ascending order, no matter the
+order given on the command line.
+
+=item »«v:B<-l>, B<--files-with-matches>»«x:
+
+Only print the filenames of matching files, instead of the matching text.
+
+=item »«v:B<-L>, B<--files-without-matches>»«x:
+
+Only print the filenames of files that do I<NOT> match.
+
+=item »«v:B<--match I<PATTERN>>»«x:
+
+Specify the I<PATTERN> explicitly. This is helpful if you don't want to put the
+regex as your first argument, e.g. when executing multiple searches over the
+same set of files.
+
+    # search for foo and bar in given files
+    ack file1 t/file* --match foo
+    ack file1 t/file* --match bar
+
+=item »«v:B<-m=I<NUM>>, B<--max-count=I<NUM>>»«x:
+
+Stop reading a file after I<NUM> matches.
+
+=item »«v:B<--man>»«x:
+
+Print this manual page.
+
+=item »«v:B<-n>, B<--no-recurse>»«x:
+
+No descending into subdirectories.
+
+=item »«v:B<-o>»«x:
+
+Show only the part of each line matching PATTERN (turns off text
+highlighting)
+
+=item »«v:B<--output=I<expr>>»«x:
+
+Output the evaluation of I<expr> for each line (turns off text
+highlighting)
+If PATTERN matches more than once then a line is output for each non-overlapping match.
+For more information please see the section L</"Examples of F<--output>">.
+
+=item »«v:B<--pager=I<program>>, B<--nopager>»«x:
+
+B<--pager> directs ack's output through I<program>.  This can also be specified
+via the C<ACK_PAGER> and C<ACK_PAGER_COLOR> environment variables.
+
+Using --pager does not suppress grouping and coloring like piping
+output on the command-line does.
+
+B<--nopager> cancels any setting in ~/.ackrc, C<ACK_PAGER> or C<ACK_PAGER_COLOR>.
+No output will be sent through a pager.
+
+=item »«v:B<--passthru>»«x:
+
+Prints all lines, whether or not they match the expression.  Highlighting
+will still work, though, so it can be used to highlight matches while
+still seeing the entire file, as in:
+
+    # Watch a log file, and highlight a certain IP address
+    $ tail -f ~/access.log | ack --passthru 123.45.67.89
+
+=item »«v:B<--print0>»«x:
+
+Only works in conjunction with -f, -g, -l or -c (filename output). The filenames
+are output separated with a null byte instead of the usual newline. This is
+helpful when dealing with filenames that contain whitespace, e.g.
+
+    # remove all files of type html
+    ack -f --html --print0 | xargs -0 rm -f
+
+=item »«v:B<-Q>, B<--literal>»«x:
+
+Quote all metacharacters in PATTERN, it is treated as a literal.
+
+=item »«v:B<-r>, B<-R>, B<--recurse>»«x:
+
+Recurse into sub-directories. This is the default and just here for
+compatibility with grep. You can also use it for turning B<--no-recurse> off.
+
+=item »«v:B<-s>»«x:
+
+Suppress error messages about nonexistent or unreadable files.  This is taken
+from fgrep.
+
+=item »«v:B<--[no]smart-case>, B<--no-smart-case>»«x:
+
+Ignore case in the search strings if PATTERN contains no uppercase
+characters. This is similar to C<smartcase> in vim. This option is
+off by default, and ignored if C<-i> is specified.
+
+B<-i> always overrides this option.
+
+=item »«v:B<--sort-files>»«x:
+
+Sorts the found files lexicographically.  Use this if you want your file
+listings to be deterministic between runs of I<ack>.
+
+=item »«v:B<--show-types>»«x:
+
+Outputs the filetypes that ack associates with each file.
+
+Works with B<-f> and B<-g> options.
+
+=item »«v:B<--type=[no]TYPE>»«x:
+
+Specify the types of files to include or exclude from a search.
+TYPE is a filetype, like I<perl> or I<xml>.  B<--type=perl> can
+also be specified as B<--perl>, and B<--type=noperl> can be done
+as B<--noperl>.
+
+If a file is of both type "foo" and "bar", specifying --foo and
+--nobar will exclude the file, because an exclusion takes precedence
+over an inclusion.
+
+Type specifications can be repeated and are ORed together.
+
+See I<ack --help=types> for a list of valid types.
+
+=item »«v:B<--type-add I<TYPE>:I<FILTER>:I<FILTERARGS>>»«x:
+
+Files with the given FILTERARGS applied to the given FILTER
+are recognized as being of (the existing) type TYPE.
+See also L</"Defining your own types">.
+
+
+=item »«v:B<--type-set I<TYPE>:I<FILTER>:I<FILTERARGS>>»«x:
+
+Files with the given FILTERARGS applied to the given FILTER are recognized as
+being of type TYPE. This replaces an existing definition for type TYPE.  See
+also L</"Defining your own types">.
+
+=item »«v:B<--type-del I<TYPE>>»«x:
+
+The filters associated with TYPE are removed from Ack, and are no longer considered
+for searches.
+
+=item »«v:B<-v>, B<--invert-match>»«x:
+
+Invert match: select non-matching lines
+
+=item »«v:B<--version>»«x:
+
+Display version and copyright information.
+
+=item »«v:B<-w>, B<--word-regexp>»«x:
+
+Force PATTERN to match only whole words.  The PATTERN is wrapped with
+C<\b> metacharacters.
+
+=item »«v:B<-x>»«x:
+
+An abbreviation for B<--files-from=->; the list of files to search are read
+from standard input, with one line per file.
+
+=item »«v:B<-1>»«x:
+
+Stops after reporting first match of any kind.  This is different
+from B<--max-count=1> or B<-m1>, where only one match per file is
+shown.  Also, B<-1> works with B<-f> and B<-g>, where B<-m> does
+not.
+
+=item »«v:B<--thpppt>»«x:
+
+Display the all-important Bill The Cat logo.  Note that the exact
+spelling of B<--thpppppt> is not important.  It's checked against
+a regular expression.
+
+=item »«v:B<--bar>»«x:
+
+Check with the admiral for traps.
+
+=item »«v:B<--cathy>»«x:
+
+Chocolate, Chocolate, Chocolate!
+
+=back
+
+=head1 »«v:THE .ackrc FILE»«x:
+
+The F<.ackrc> file contains command-line options that are prepended
+to the command line before processing.  Multiple options may live
+on multiple lines.  Lines beginning with a # are ignored.  A F<.ackrc>
+might look like this:
+
+    # Always sort the files
+    --sort-files
+
+    # Always color, even if piping to a another program
+    --color
+
+    # Use "less -r" as my pager
+    --pager=less -r
+
+Note that arguments with spaces in them do not need to be quoted,
+as they are not interpreted by the shell. Basically, each I<line>
+in the F<.ackrc> file is interpreted as one element of C<»«:cperl-array-face:@ARGV»«x:>.
+
+F<ack> looks in several locations for F<.ackrc> files; the searching
+process is detailed in L</"ACKRC LOCATION SEMANTICS">.  These
+files are not considered if B<--noenv> is specified on the command line.
+
+=head1 »«v:Defining your own types»«x:
+
+ack allows you to define your own types in addition to the predefined
+types. This is done with command line options that are best put into
+an F<.ackrc> file - then you do not have to define your types over and
+over again. In the following examples the options will always be shown
+on one command line so that they can be easily copy & pasted.
+
+I<ack --perl foo> searches for foo in all perl files. I<ack --help=types>
+tells you, that perl files are files ending
+in .pl, .pm, .pod or .t. So what if you would like to include .xs
+files as well when searching for --perl files? I<ack --type-add perl:ext:xs --perl foo>
+does this for you. B<--type-add> appends
+additional extensions to an existing type.
+
+If you want to define a new type, or completely redefine an existing
+type, then use B<--type-set>. I<ack --type-set eiffel:ext:e,eiffel> defines
+the type I<eiffel> to include files with
+the extensions .e or .eiffel. So to search for all eiffel files
+containing the word Bertrand use I<ack --type-set eiffel:ext:e,eiffel --eiffel Bertrand>.
+As usual, you can also write B<--type=eiffel>
+instead of B<--eiffel>. Negation also works, so B<--noeiffel> excludes
+all eiffel files from a search. Redefining also works: I<ack --type-set cc:ext:c,h>
+and I<.xs> files no longer belong to the type I<cc>.
+
+When defining your own types in the F<.ackrc> file you have to use
+the following:
+
+  --type-set=eiffel:ext:e,eiffel
+
+or writing on separate lines
+
+  --type-set
+  eiffel:ext:e,eiffel
+
+The following does B<NOT> work in the F<.ackrc> file:
+
+  --type-set eiffel:ext:e,eiffel
+
+
+In order to see all currently defined types, use I<--help-types>, e.g.
+I<ack --type-set backup:ext:bak --type-add perl:ext:perl --help-types>
+
+In addition to filtering based on extension (like ack 1.x allowed), ack 2
+offers additional filter types.  The generic syntax is
+I<--type-set TYPE:FILTER:FILTERARGS>; I<FILTERARGS> depends on the value
+of I<FILTER>.
+
+=over »«v:4»«x:
+
+=item »«v:is:I<FILENAME>»«x:
+
+I<is> filters match the target filename exactly.  It takes exactly one
+argument, which is the name of the file to match.
+
+Example:
+
+    --type-set make:is:Makefile
+
+=item »«v:ext:I<EXTENSION>[,I<EXTENSION2>[,...]]»«x:
+
+I<ext> filters match the extension of the target file against a list
+of extensions.  No leading dot is needed for the extensions.
+
+Example:
+
+    --type-set perl:ext:pl,pm,t
+
+=item »«v:match:I<PATTERN>»«x:
+
+I<match> filters match the target filename against a regular expression.
+The regular expression is made case insensitive for the search.
+
+Example:
+
+    --type-set make:match:/(gnu)?makefile/
+
+=item »«v:firstlinematch:I<PATTERN>»«x:
+
+I<firstlinematch> matches the first line of the target file against a
+regular expression.  Like I<match>, the regular expression is made
+case insensitive.
+
+Example:
+
+    --type-add perl:firstlinematch:/perl/
+
+=back
+
+More filter types may be made available in the future.
+
+=head1 »«v:ENVIRONMENT VARIABLES»«x:
+
+For commonly-used ack options, environment variables can make life
+much easier.  These variables are ignored if B<--noenv> is specified
+on the command line.
+
+=over »«v:4»«x:
+
+=item »«v:ACKRC»«x:
+
+Specifies the location of the user's F<.ackrc> file.  If this file doesn't
+exist, F<ack> looks in the default location.
+
+=item »«v:ACK_OPTIONS»«x:
+
+This variable specifies default options to be placed in front of
+any explicit options on the command line.
+
+=item »«v:ACK_COLOR_FILENAME»«x:
+
+Specifies the color of the filename when it's printed in B<--group>
+mode.  By default, it's "bold green".
+
+The recognized attributes are clear, reset, dark, bold, underline,
+underscore, blink, reverse, concealed black, red, green, yellow,
+blue, magenta, on_black, on_red, on_green, on_yellow, on_blue,
+on_magenta, on_cyan, and on_white.  Case is not significant.
+Underline and underscore are equivalent, as are clear and reset.
+The color alone sets the foreground color, and on_color sets the
+background color.
+
+This option can also be set with B<--color-filename>.
+
+=item »«v:ACK_COLOR_MATCH»«x:
+
+Specifies the color of the matching text when printed in B<--color>
+mode.  By default, it's "black on_yellow".
+
+This option can also be set with B<--color-match>.
+
+See B<ACK_COLOR_FILENAME> for the color specifications.
+
+=item »«v:ACK_COLOR_LINENO»«x:
+
+Specifies the color of the line number when printed in B<--color>
+mode.  By default, it's "bold yellow".
+
+This option can also be set with B<--color-lineno>.
+
+See B<ACK_COLOR_FILENAME> for the color specifications.
+
+=item »«v:ACK_PAGER»«x:
+
+Specifies a pager program, such as C<more>, C<less> or C<most>, to which
+ack will send its output.
+
+Using C<ACK_PAGER> does not suppress grouping and coloring like
+piping output on the command-line does, except that on Windows
+ack will assume that C<ACK_PAGER> does not support color.
+
+C<ACK_PAGER_COLOR> overrides C<ACK_PAGER> if both are specified.
+
+=item »«v:ACK_PAGER_COLOR»«x:
+
+Specifies a pager program that understands ANSI color sequences.
+Using C<ACK_PAGER_COLOR> does not suppress grouping and coloring
+like piping output on the command-line does.
+
+If you are not on Windows, you never need to use C<ACK_PAGER_COLOR>.
+
+=back
+
+=head1 »«v:AVAILABLE COLORS»«x:
+
+F<ack> uses the colors available in Perl's L<Term::ANSIColor> module, which
+provides the following listed values. Note that case does not matter when using
+these values.
+
+=head2 »«v:Foreground colors»«x:
+
+    black  red  green  yellow  blue  magenta  cyan  white
+
+    bright_black  bright_red      bright_green  bright_yellow
+    bright_blue   bright_magenta  bright_cyan   bright_white
+
+=head2 »«v:Background colors»«x:
+
+    on_black  on_red      on_green  on_yellow
+    on_blue   on_magenta  on_cyan   on_white
+
+    on_bright_black  on_bright_red      on_bright_green  on_bright_yellow
+    on_bright_blue   on_bright_magenta  on_bright_cyan   on_bright_white
+
+=head1 »«v:ACK & OTHER TOOLS»«x:
+
+=head2 »«v:Vim integration»«x:
+
+F<ack> integrates easily with the Vim text editor. Set this in your
+F<.vimrc> to use F<ack> instead of F<grep>:
+
+    set grepprg=ack\ -k
+
+That example uses C<-k> to search through only files of the types ack
+knows about, but you may use other default flags. Now you can search
+with F<ack> and easily step through the results in Vim:
+
+  :grep Dumper perllib
+
+Miles Sterrett has written a Vim plugin for F<ack> which allows you to use
+C<:Ack> instead of C<:grep>, as well as several other advanced features.
+
+L<https://github.com/mileszs/ack.vim>
+
+=head2 »«v:Emacs integration»«x:
+
+Phil Jackson put together an F<ack.el> extension that "provides a
+simple compilation mode ... has the ability to guess what files you
+want to search for based on the major-mode."
+
+L<http://www.shellarchive.co.uk/content/emacs.html>
+
+=head2 »«v:TextMate integration»«x:
+
+Pedro Melo is a TextMate user who writes "I spend my day mostly
+inside TextMate, and the built-in find-in-project sucks with large
+projects.  So I hacked a TextMate command that was using find +
+grep to use ack.  The result is the Search in Project with ack, and
+you can find it here:
+L<http://www.simplicidade.org/notes/archives/2008/03/search_in_proje.html>"
+
+=head2 »«v:Shell and Return Code»«x:
+
+For greater compatibility with I<grep>, I<ack> in normal use returns
+shell return or exit code of 0 only if something is found and 1 if
+no match is found.
+
+(Shell exit code 1 is C<$?=256> in perl with C<system> or backticks.)
+
+The I<grep> code 2 for errors is not used.
+
+If C<-f> or C<-g> are specified, then 0 is returned if at least one
+file is found.  If no files are found, then 1 is returned.
+
+=cut
+
+=head1 »«v:DEBUGGING ACK PROBLEMS»«x:
+
+If ack gives you output you're not expecting, start with a few simple steps.
+
+=head2 »«v:Use B<--noenv>»«x:
+
+Your environment variables and F<.ackrc> may be doing things you're
+not expecting, or forgotten you specified.  Use B<--noenv> to ignore
+your environment and F<.ackrc>.
+
+=head2 »«v:Use B<-f> to see what files have been selected»«x:
+
+Ack's B<-f> was originally added as a debugging tool.  If ack is
+not finding matches you think it should find, run F<ack -f> to see
+what files have been selected.  You can also add the C<--show-types>
+options to show the type of each file selected.
+
+=head2 »«v:Use B<--dump>»«x:
+
+This lists the ackrc files that are loaded and the options loaded
+from them.
+So for example you can find a list of directories that do not get searched or where filetypes are defined.
+
+=head1 »«v:TIPS»«x:
+
+=head2 »«v:Use the F<.ackrc> file.»«x:
+
+The F<.ackrc> is the place to put all your options you use most of
+the time but don't want to remember.  Put all your --type-add and
+--type-set definitions in it.  If you like --smart-case, set it
+there, too.  I also set --sort-files there.
+
+=head2 »«v:Use F<-f> for working with big codesets»«x:
+
+Ack does more than search files.  C<ack -f --perl> will create a
+list of all the Perl files in a tree, ideal for sending into F<xargs>.
+For example:
+
+    # Change all "this" to "that" in all Perl files in a tree.
+    ack -f --perl | xargs perl -p -i -e's/this/that/g'
+
+or if you prefer:
+
+    perl -p -i -e's/this/that/g' $(ack -f --perl)
+
+=head2 »«v:Use F<-Q> when in doubt about metacharacters»«x:
+
+If you're searching for something with a regular expression
+metacharacter, most often a period in a filename or IP address, add
+the -Q to avoid false positives without all the backslashing.  See
+the following example for more...
+
+=head2 »«v:Use ack to watch log files»«x:
+
+Here's one I used the other day to find trouble spots for a website
+visitor.  The user had a problem loading F<troublesome.gif>, so I
+took the access log and scanned it with ack twice.
+
+    ack -Q aa.bb.cc.dd /path/to/access.log | ack -Q -B5 troublesome.gif
+
+The first ack finds only the lines in the Apache log for the given
+IP.  The second finds the match on my troublesome GIF, and shows
+the previous five lines from the log in each case.
+
+=head2 »«v:Examples of F<--output>»«x:
+
+Following variables are useful in the expansion string:
+
+=over »«v:4»«x:
+
+=item »«v:C<$&>»«x:
+
+The whole string matched by PATTERN.
+
+=item »«v:C<$1>, C<$2>, ...»«x:
+
+The contents of the 1st, 2nd ... bracketed group in PATTERN.
+
+=item »«v:C<$`>»«x:
+
+The string before the match.
+
+=item »«v:C<$'>»«x:
+
+The string after the match.
+
+=back
+
+For more details and other variables see
+L<http://perldoc.perl.org/perlvar.html#Variables-related-to-regular-expressions|perlvar>.
+
+This example shows how to add text around a particular pattern
+(in this case adding _ around word with "e")
+
+    ack2.pl "\w*e\w*" quick.txt --output="$`_$&_$'"
+    _The_ quick brown fox jumps over the lazy dog
+    The quick brown fox jumps _over_ the lazy dog
+    The quick brown fox jumps over _the_ lazy dog
+
+This shows how to pick out particular parts of a match using ( ) within regular expression.
+
+  ack '=head(\d+)\s+(.*)' --output=' $1 : $2'
+  input file contains "=head1 NAME"
+  output  "1 : NAME"
+
+=head2 »«v:Share your knowledge»«x:
+
+Join the ack-users mailing list.  Send me your tips and I may add
+them here.
+
+=head1 »«v:FAQ»«x:
+
+=head2 »«v:Why isn't ack finding a match in (some file)?»«x:
+
+Probably because it's of a type that ack doesn't recognize.  ack's
+searching behavior is driven by filetype.  B<If ack doesn't know
+what kind of file it is, ack ignores the file.>
+
+Use the C<-f> switch to see a list of files that ack will search
+for you.  You can use the C<--show-types> switch to show which type
+ack thinks each file is.
+
+=head2 »«v:Wouldn't it be great if F<ack> did search & replace?»«x:
+
+No, ack will always be read-only.  Perl has a perfectly good way
+to do search & replace in files, using the C<-i>, C<-p> and C<-n>
+switches.
+
+You can certainly use ack to select your files to update.  For
+example, to change all "foo" to "bar" in all PHP files, you can do
+this from the Unix shell:
+
+    $ perl -i -p -e's/foo/bar/g' $(ack -f --php)
+
+=head2 »«v:Can I make ack recognize F<.xyz> files?»«x:
+
+Yes!  Please see L</"Defining your own types">.  If you think
+that F<ack> should recognize a type by default, please see
+L</"ENHANCEMENTS">.
+
+=head2 »«v:There's already a program/package called ack.»«x:
+
+Yes, I know.
+
+=head2 »«v:Why is it called ack if it's called ack-grep?»«x:
+
+The name of the program is "ack".  Some packagers have called it
+"ack-grep" when creating packages because there's already a package
+out there called "ack" that has nothing to do with this ack.
+
+I suggest you make a symlink named F<ack> that points to F<ack-grep>
+because one of the crucial benefits of ack is having a name that's
+so short and simple to type.
+
+To do that, run this with F<sudo> or as root:
+
+   ln -s /usr/bin/ack-grep /usr/bin/ack
+
+Alternatively, you could use a shell alias:
+
+    # bash/zsh
+    alias ack=ack-grep
+
+    # csh
+    alias ack ack-grep
+
+=head2 »«v:What does F<ack> mean?»«x:
+
+Nothing.  I wanted a name that was easy to type and that you could
+pronounce as a single syllable.
+
+=head2 »«v:Can I do multi-line regexes?»«x:
+
+No, ack does not support regexes that match multiple lines.  Doing
+so would require reading in the entire file at a time.
+
+If you want to see lines near your match, use the C<--A>, C<--B>
+and C<--C> switches for displaying context.
+
+=head2 »«v:Why is ack telling me I have an invalid option when searching for C<+foo>?»«x:
+
+ack treats command line options beginning with C<+> or C<-> as options; if you
+would like to search for these, you may prefix your search term with C<--> or
+use the C<--match> option.  (However, don't forget that C<+> is a regular
+expression metacharacter!)
+
+=head2 »«v:Why does C<"ack '.{40000,}'"> fail?  Isn't that a valid regex?»«x:
+
+The Perl language limits the repetition quanitifier to 32K.  You
+can search for C<.{32767}> but not C<.{32768}>.
+
+=head1 »«v:ACKRC LOCATION SEMANTICS»«x:
+
+Ack can load its configuration from many sources.  This list
+specifies the sources Ack looks for configuration; each one
+that is found is loaded in the order specified here, and
+each one overrides options set in any of the sources preceding
+it.  (For example, if I set --sort-files in my user ackrc, and
+--nosort-files on the command line, the command line takes
+precedence)
+
+=over »«v:4»«x:
+
+=item »«v:*»«x:
+
+Defaults are loaded from App::Ack::ConfigDefaults.  This can be omitted
+using C<--ignore-ack-defaults>.
+
+=item »«v:* Global ackrc»«x:
+
+Options are then loaded from the global ackrc.  This is located at
+C</etc/ackrc> on Unix-like systems.
+
+Under Windows XP and earlier, the ackrc is at
+C<C:\Documents and Settings\All Users\Application Data\ackrc>.
+
+Under Windows Vista/7, the global ackrc is at
+C<C:\ProgramData>
+
+The C<--noenv> option prevents all ackrc files from being loaded.
+
+=item »«v:* User ackrc»«x:
+
+Options are then loaded from the user's ackrc.  This is located at
+C<$HOME/.ackrc> on Unix-like systems.
+
+Under Windows XP and earlier, the user's ackrc is at
+C<C:\Documents and Settings\$USER\Application Data\ackrc>.
+
+Under Windows Vista/7, the user's ackrc is at
+<C:\Users\$USER\AppData\Roaming>.
+
+If you want to load a different user-level ackrc, it may be specified
+with the C<$ACKRC> environment variable.
+
+The C<--noenv> option prevents all ackrc files from being loaded.
+
+=item »«v:* Project ackrc»«x:
+
+Options are then loaded from the project ackrc.  The project ackrc is
+the first ackrc file with the name C<.ackrc> or C<_ackrc>, first searching
+in the current directory, then the parent directory, then the grandparent
+directory, etc.  This can be omitted using C<--noenv>.
+
+=item »«v:* --ackrc»«x:
+
+The C<--ackrc> option may be included on the command line to specify an
+ackrc file that can override all others.  It is consulted even if C<--noenv>
+is present.
+
+=item »«v:* ACK_OPTIONS»«x:
+
+Options are then loaded from the environment variable C<ACK_OPTIONS>.  This can
+be omitted using C<--noenv>.
+
+=item »«v:* Command line»«x:
+
+Options are then loaded from the command line.
+
+=back
+
+=head1 »«v:DIFFERENCES BETWEEN ACK 1.X AND ACK 2.X»«x:
+
+A lot of changes were made for ack 2; here is a list of them.
+
+=head2 »«v:GENERAL CHANGES»«x:
+
+=over »«v:4»«x:
+
+=item »«v:*»«x:
+
+When no selectors are specified, ack 1.x only searches through files that
+it can map to a file type.  ack 2.x, by contrast, will search through
+every regular, non-binary file that is not explicitly ignored via
+B<--ignore-file> or B<--ignore-dir>.  This is similar to the behavior of the
+B<-a/--all> option in ack 1.x.
+
+=item »«v:*»«x:
+
+A more flexible filter system has been added, so that more powerful file types
+may be created by the user.  For details, please consult
+L</"Defining your own types">.
+
+=item »«v:*»«x:
+
+ack now loads multiple ackrc files; see L</"ACKRC LOCATION SEMANTICS"> for
+details.
+
+=item »«v:*»«x:
+
+ack's default filter definitions aren't special; you may tell ack to
+completely disregard them if you don't like them.
+
+=back
+
+=head2 »«v:REMOVED OPTIONS»«x:
+
+=over »«v:4»«x:
+
+=item »«v:*»«x:
+
+Because of the change in default search behavior, the B<-a/--all> and
+B<-u/--unrestricted> options have been removed.  In addition, the
+B<-k/--known-types> option was added to cause ack to behave with
+the default search behavior of ack 1.x.
+
+=item »«v:*»«x:
+
+The B<-G> option has been removed.  Two regular expressions on the
+command line was considered too confusing; to simulate B<-G>'s functionality,
+you may use the new B<-x> option to pipe filenames from one invocation of
+ack into another.
+
+=item »«v:*»«x:
+
+The B<--binary> option has been removed.
+
+=item »«v:*»«x:
+
+The B<--skipped> option has been removed.
+
+=item »«v:*»«x:
+
+The B<--text> option has been removed.
+
+=item »«v:*»«x:
+
+The B<--invert-file-match> option has been removed.  Instead, you may
+use B<-v> with B<-g>.
+
+=back
+
+=head2 »«v:CHANGED OPTIONS»«x:
+
+=over »«v:4»«x:
+
+=item »«v:*»«x:
+
+The options that modify the regular expression's behavior (B<-i>, B<-w>,
+B<-Q>, and B<-v>) may now be used with B<-g>.
+
+=back
+
+=head2 »«v:ADDED OPTIONS»«x:
+
+=over »«v:4»«x:
+
+=item »«v:*»«x:
+
+B<--files-from> was added so that a user may submit a list of filenames as
+a list of files to search.
+
+=item »«v:*»«x:
+
+B<-x> was added to tell ack to accept a list of filenames via standard input;
+this list is the list of filenames that will be used for the search.
+
+=item »«v:*»«x:
+
+B<-s> was added to tell ack to suppress error messages about non-existent or
+unreadable files.
+
+=item »«v:*»«x:
+
+B<--ignore-directory> and B<--noignore-directory> were added as aliases for
+B<--ignore-dir> and B<--noignore-dir> respectively.
+
+=item »«v:*»«x:
+
+B<--ignore-file> was added so that users may specify patterns of files to
+ignore (ex. /.*~$/).
+
+=item »«v:*»«x:
+
+B<--dump> was added to allow users to easily find out which options are
+set where.
+
+=item »«v:*»«x:
+
+B<--create-ackrc> was added so that users may create custom ackrc files based
+on the default settings loaded by ack, and so that users may easily view those
+defaults.
+
+=item »«v:*»«x:
+
+B<--type-del> was added to selectively remove file type definitions.
+
+=item »«v:*»«x:
+
+B<--ignore-ack-defaults> was added so that users may ignore ack's default
+options in favor of their own.
+
+=item »«v:*»«x:
+
+B<--bar> was added so ack users may consult Admiral Ackbar.
+
+=back
+
+=head1 »«v:AUTHOR»«x:
+
+Andy Lester, C<< <andy at petdance.com> >>
+
+=head1 »«v:BUGS»«x:
+
+Please report any bugs or feature requests to the issues list at
+Github: L<https://github.com/petdance/ack2/issues>
+
+=head1 »«v:ENHANCEMENTS»«x:
+
+All enhancement requests MUST first be posted to the ack-users
+mailing list at L<http://groups.google.com/group/ack-users>.  I
+will not consider a request without it first getting seen by other
+ack users.  This includes requests for new filetypes.
+
+There is a list of enhancements I want to make to F<ack> in the ack
+issues list at Github: L<https://github.com/petdance/ack2/issues>
+
+Patches are always welcome, but patches with tests get the most
+attention.
+
+=head1 »«v:SUPPORT»«x:
+
+Support for and information about F<ack> can be found at:
+
+=over »«v:4»«x:
+
+=item »«v:* The ack homepage»«x:
+
+L<http://beyondgrep.com/>
+
+=item »«v:* The ack-users mailing list»«x:
+
+L<http://groups.google.com/group/ack-users>
+
+=item »«v:* The ack issues list at Github»«x:
+
+L<https://github.com/petdance/ack2/issues>
+
+=item »«v:* AnnoCPAN: Annotated CPAN documentation»«x:
+
+L<http://annocpan.org/dist/ack>
+
+=item »«v:* CPAN Ratings»«x:
+
+L<http://cpanratings.perl.org/d/ack>
+
+=item »«v:* Search CPAN»«x:
+
+L<http://search.cpan.org/dist/ack>
+
+=item »«v:* Git source repository»«x:
+
+L<https://github.com/petdance/ack2>
+
+=back
+
+=head1 »«v:ACKNOWLEDGEMENTS»«x:
+
+How appropriate to have I<ack>nowledgements!
+
+Thanks to everyone who has contributed to ack in any way, including
+Stephen Thirlwall,
+Jonah Bishop,
+Chris Rebert,
+Denis Howe,
+RaE<uacute>l GundE<iacute>n,
+James McCoy,
+Daniel Perrett,
+Steven Lee,
+Jonathan Perret,
+Fraser Tweedale,
+RaE<aacute>l GundE<aacute>n,
+Steffen Jaeckel,
+Stephan Hohe,
+Michael Beijen,
+Alexandr Ciornii,
+Christian Walde,
+Charles Lee,
+Joe McMahon,
+John Warwick,
+David Steinbrunner,
+Kara Martens,
+Volodymyr Medvid,
+Ron Savage,
+Konrad Borowski,
+Dale Sedivic,
+Michael McClimon,
+Andrew Black,
+Ralph Bodenner,
+Shaun Patterson,
+Ryan Olson,
+Shlomi Fish,
+Karen Etheridge,
+Olivier Mengue,
+Matthew Wild,
+Scott Kyle,
+Nick Hooey,
+Bo Borgerson,
+Mark Szymanski,
+Marq Schneider,
+Packy Anderson,
+JR Boyens,
+Dan Sully,
+Ryan Niebur,
+Kent Fredric,
+Mike Morearty,
+Ingmar Vanhassel,
+Eric Van Dewoestine,
+Sitaram Chamarty,
+Adam James,
+Richard Carlsson,
+Pedro Melo,
+AJ Schuster,
+Phil Jackson,
+Michael Schwern,
+Jan Dubois,
+Christopher J. Madsen,
+Matthew Wickline,
+David Dyck,
+Jason Porritt,
+Jjgod Jiang,
+Thomas Klausner,
+Uri Guttman,
+Peter Lewis,
+Kevin Riggle,
+Ori Avtalion,
+Torsten Blix,
+Nigel Metheringham,
+GE<aacute>bor SzabE<oacute>,
+Tod Hagan,
+Michael Hendricks,
+E<AElig>var ArnfjE<ouml>rE<eth> Bjarmason,
+Piers Cawley,
+Stephen Steneker,
+Elias Lutfallah,
+Mark Leighton Fisher,
+Matt Diephouse,
+Christian Jaeger,
+Bill Sully,
+Bill Ricker,
+David Golden,
+Nilson Santos F. Jr,
+Elliot Shank,
+Merijn Broeren,
+Uwe Voelker,
+Rick Scott,
+Ask BjE<oslash>rn Hansen,
+Jerry Gay,
+Will Coleda,
+Mike O'Regan,
+Slaven ReziE<0x107>,
+Mark Stosberg,
+David Alan Pisoni,
+Adriano Ferreira,
+James Keenan,
+Leland Johnson,
+Ricardo Signes,
+Pete Krawczyk and
+Rob Hoelz.
+
+=head1 »«v:COPYRIGHT & LICENSE»«x:
+
+Copyright 2005-2014 Andy Lester.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the Artistic License v2.0.
+
+See http://www.perlfoundation.org/artistic_license_2_0 or the LICENSE.md
+file that comes with the ack distribution.
+
+=cut
+»«k:package» «f:App::Ack»;
+
+«k:use» «f:warnings»;
+«k:use» «f:strict»;
+
+
+«k:our» «v:$VERSION»;
+«k:our» «v:$COPYRIGHT»;
+«k:BEGIN» {
+    $VERSION = «s:'2.14'»;
+    $COPYRIGHT = «s:'Copyright 2005-2014 Andy Lester.'»;
+}
+
+«k:our» «v:$fh»;
+
+«k:BEGIN» {
+    $fh = *STDOUT;
+}
+
+
+«k:our» «:cperl-hash-face:%types»;
+«k:our» «:cperl-hash-face:%type_wanted»;
+«k:our» «:cperl-hash-face:%mappings»;
+«k:our» «:cperl-hash-face:%ignore_dirs»;
+
+«k:our» «v:$is_filter_mode»;
+«k:our» «v:$output_to_pipe»;
+
+«k:our» «v:$dir_sep_chars»;
+«k:our» «v:$is_cygwin»;
+«k:our» «v:$is_windows»;
+
+«k:use» «f:File::Spec» 1.00015 ();
+
+«k:BEGIN» {
+    «m:# »«x:These have to be checked before any filehandle diddling.
+»    $output_to_pipe  = «t:not» «f:-t» *STDOUT;
+    $is_filter_mode = «f:-p» STDIN;
+
+    $is_cygwin       = ($^O «t:eq» «s:'cygwin'»);
+    $is_windows      = ($^O «t:eq» «s:'MSWin32'»);
+    $dir_sep_chars   = $is_windows ? «t:quotemeta»( «s:'\\/'» ) : «t:quotemeta»( File::Spec->catfile( «s:''», «s:''» ) );
+}
+
+
+
+«k:sub» «f:remove_dir_sep» {
+    «k:my» «v:$path» = «:cperl-nonoverridable-face:shift»;
+    $path =~ «:cperl-nonoverridable-face:s»«c:/»«f:[»«s:$dir_sep_chars»«f:]$»«c:/»/;
+
+    «k:return» $path;
+}
+
+
+
+«k:sub» «t:warn» {
+    «k:return» «t:CORE»::«t:warn»( _my_program(), «s:': '», «:cperl-array-face:@_», «s:"\n"» );
+}
+
+
+«k:sub» «k:die» {
+    «k:return» «t:CORE»::«k:die»( _my_program(), «s:': '», «:cperl-array-face:@_», «s:"\n"» );
+}
+
+«k:sub» «f:_my_program» {
+    «k:require» «f:File::Basename»;
+    «k:return» File::Basename::basename( $0 );
+}
+
+
+
+«k:sub» «f:filetypes_supported» {
+    «k:return» «:cperl-nonoverridable-face:keys» «:cperl-hash-face:%mappings»;
+}
+
+«k:sub» «f:_get_thpppt» {
+    «k:my» «v:$y» = «:cperl-nonoverridable-face:q»«s:{_   /|,\\'!.x',=(www)=,   U   }»;
+    $y =~ «:cperl-nonoverridable-face:tr»«c:/»«s:,x!w»«c:/»«s:\nOo_»«c:/»;
+    «k:return» $y;
+}
+
+«k:sub» «f:_thpppt» {
+    «k:my» «v:$y» = _get_thpppt();
+    App::Ack::«:cperl-nonoverridable-face:print»( «s:"$y ack »«:cperl-array-face:$_»«s:[0]!\n"» );
+    «k:exit» 0;
+}
+
+«k:sub» «f:_bar» {
+    «k:my» «v:$x»;
+    $x = <<«s:'»«c:_BAR»«s:'»;
+«s: 6?!I'7!I"?%+!
+ 3~!I#7#I"7#I!?!+!="+"="+!:!
+ 2?#I!7!I!?#I!7!I"+"=%+"=#
+ 1?"+!?*+!=#~"=!+#?"="+!
+ 0?"+!?"I"?&+!="~!=!~"=!+%="+"
+ /I!+!?)+!?!+!=$~!=!~!="+!="+"?!="?!
+ .?»«:cperl-hash-face:%I»«s:"?%+%='?!=#~$="
+ ,,!?»«:cperl-hash-face:%I»«s:"?(+$=$~!=#:"~$:!~!
+ ,I!?!I!?"I"?!+#?"+!?!+#="~$:!~!:!~!:!,!:!,":#~!
+ +I!?&+!="+!?#+$=!~":!~!:!~!:!,!:#,!:!,»«:cperl-hash-face:%:»«s:"
+ *+!I!?!+$=!+!=!+!?$+#=!~":!~":#,$:",#:!,!:!
+ *I!?"+!?!+!=$+!?#+#=#~":$,!:",!:!,&:"
+ )I!?$=!~!=#+"?!+!=!+!=!~!="~!:!~":!,'.!,»«:cperl-hash-face:%:»«s:!~!
+ (=!?"+!?!=!~$?"+!?!+!=#~"=",!="~$,$.",#.!:!=!
+ (I"+"="~"=!+&=!~"=!~!,!~!+!=!?!+!?!=!I!?!+"=!.",!.!,":!
+ »«:cperl-hash-face:%I»«s:$?!+!?!=%+!~!+#~!=!~#:#=!~!+!~!=#:!,%.!,!.!:"
+ $I!?!=!?!I!+!?"+!=!~!=!~!?!I!?!=!+!=!~#:",!~"=!~!:"~!=!:",&:" '-/
+ $?!+!I!?"+"=!+"~!,!:"+#~#:#,"=!~"=!,!~!,!.",!:".!:! */! !I!t!'!s! !a! !g!r!e!p!!! !/!
+ $+"=!+!?!+"~!=!:!~!:"I!+!,!~!=!:!~!,!:!,$:!~".&:"~!,# (-/
+ %~!=!~!=!:!.!+"~!:!,!.!,!~!=!:$.!,":!,!.!:!~!,!:!=!.#="~!,!:" ./!
+ %=!~!?!+"?"+!=!~",!.!:!?!~!.!:!,!:!,#.!,!:","~!:!=!~!=!:",!~! ./!
+ %+"~":!~!=#~!:!~!,!.!~!:",!~!=!~!.!:!,!.",!:!,":!=":!.!,!:!7! -/!
+ %~",!:".#:!=!:!,!:"+!:!~!:!.!,!~!,!.#,!.!,$:"~!,":"~!=! */!
+ &=!~!=#+!=!~",!.!:",#:#,!.",+:!,!.",!=!+!?!
+ &~!=!~!=!~!:"~#:",!.!,#~!:!.!+!,!.",$.",$.#,!+!I!?!
+ &~!="~!:!~":!~",!~!=!~":!,!:!~!,!:!,&.$,#."+!?!I!?!I!
+ &~!=!~!=!+!,!:!~!:!=!,!:!~&:$,!.!,".!,".!,#."~!+!?$I!
+ &~!=!~!="~!=!:!~":!,!~»«:cperl-hash-face:%:»«s:#,!:",!.!,#.",#I!7"I!?!+!?"I"
+ &+!I!7!:#~"=!~!:!,!:"~$.!=!.!,!~!,$.#,!~!7!I#?!+!?"I"7!
+ %7#?!+!~!:!=!~!=!~":!,!:"~":#.!,)7#I"?"I!7&
+ %7#I!=":!=!~!:"~$:"~!:#,!:!,!:!~!:#,!7#I!?#7)
+ $7$+!,!~!=#~!:!~!:!~$:#,!.!~!:!=!,":!7#I"?#7+=!?!
+ $7#I!~!,!~#=!~!:"~!:!,!:!,#:!=!~",":!7$I!?#I!7*+!=!+"
+ "I!7$I!,":!,!.!=":$,!:!,$:$7$I!+!?"I!7+?"I!7!I!7!,!
+ !,!7»«:cperl-hash-face:%I»«s:!:",!."~":!,&.!,!:!~!I!7$I!+!?"I!7,?!I!7',!
+ !7(,!.#~":!,%.!,!7»«:cperl-hash-face:%I»«s:!7!?#I"7,+!?!7*
+7+:!,!~#,"=!7'I!?#I"7/+!7+
+77I!+!7!?!7!I"71+!7,
+»«c:_BAR»«x:
+»
+    «k:return» App::Ack::__pic($x);
+}
+
+«k:sub» «f:_cathy» {
+    «k:my» «v:$x» = <<«s:'»«c:CATHY»«s:'»;
+«s: 0+!--+!
+ 0|! "C!H!O!C!O!L!A!T!E!!! !|!
+ 0|! "C!H!O!C!O!L!A!T!E!!! !|!
+ 0|! "C!H!O!C!O!L!A!T!E!!! !|!
+ 0|! $A"C!K!!! $|!
+ 0+!--+!
+ 6\! 1:!,!.! !
+ 7\! /.!M!~!Z!M!~!
+ 8\! /~!D! "M! !
+ 4.! $\! /M!~!.!8! +.!M# 4
+ 0,!.! (\! .~!M!N! ,+!I!.!M!.! 3
+ /?!O!.!M!:! '\! .O!.! +~!Z!=!N!.! 4
+ ..! !D!Z!.!Z!.! '\! 9=!M".! 6
+ /.! !.!~!M".! '\! 8~! 9
+ 4M!.! /.!7!N!M!.! F
+ 4.! &:!M! !N"M# !M"N!M! #D!M&=! =
+ :M!7!M#:! !~!M!7!,!$!M!:! #.! !O!N!.!M!:!M# ;
+ 8Z!M"~!N!$!D!.!N!?! !I!N!.! (?!M! !M!,!D!M".! 9
+ (?!Z!M!N!:! )=!M!O!8!.!M!+!M! !M!,! !O!M! +,!M!.!M!~!Z!N!M!:! &:!~! 0
+ &8!7!.!~!M"D!M!,! &M!?!=!8! !M!,!O! !M!+! !+!O!.!M! $M#~! !.!8!M!Z!.!M! !O!M"Z! »«:cperl-hash-face:%:»«s:!~!M!Z!M!Z!.! +
+ &:!M!7!,! *M!.!Z!M! !8"M!.!M!~! !.!M!.!=! #~!8!.!M! !7!M! "N!Z#I! !D!M!,!M!.! $."M!,! !M!.! *
+ 2$!O! "N! !.!M!I! !7" "M! "+!O! !~!M! !d!O!.!7!I!M!.! !.!O!=!M!.! !M",!M!.! %.!$!O!D! +
+ 1~!O! "M!+! !8!$! "M! "?!O! »«:cperl-hash-face:%Z»«s:!8!D!M!?!8!I!O!7!M! #M!.!M! "M",!M! 4
+ 07!~! ".!8! !.!M! "I!+! !.!M! &Z!D!.!7!=!M! !:!.!M! #:!8"+! !.!+!8! !8! 3
+ /~!M! #N! !~!M!$! !.!M! !.!M" &~!M! "~!M!O! "D! $M! !8! "M!,!M!+!D!.! 1
+ #.! #?!M!N!.! #~!O! $M!.!7!$! "?" !?!~!M! '7!8!?!M!.!+!M"O! $?"$!D! !.!O! !$!7!I!.! 0
+ $,!M!:!O!?! ".! !?!=! $=!:!O! !M! "M! !M! !+!$! (.! +.!M! !M!.! !8! !+"Z!~! $:!M!$! !.! '
+ #.!8!.!I!$! $7!I! »«:cperl-hash-face:%M»«s:" !=!M! !~!M!D! "7!I! .I!O! %?!=!,!D! !,!M! !D!~!8!~! »«:cperl-hash-face:%D»«s:!M! (
+ #.!M"?! $=!O! %=!N! "8!.! !Z!M! #M!~! (M!:! #.!M" &O! !M!.! !?!,! !8!.!N!~! $8!N!M!,!.! %
+ *$!O! &M!,! "O! !.!M!.! #M! (~!M( &O!.! !7! "M! !.!M!.!M!,! #.!M! !M! &
+ )=!8!.! $.!M!O!.! "$!.!I!N! !I!M# (7!M(I! »«:cperl-hash-face:%D»«s:"Z!M! "=!I! "M! !M!:! #~!D! '
+ )D! &8!N!:! ".!O! !M!="M! "M! (7!M) %." !M!D!."M!.! !$!=! !M!,! +
+ (M! &+!.!M! #Z!7!O!M!.!~!8! +,!M#D!?!M#D! #.!Z!M#,!Z!?! !~!N! "N!.! !M! +
+ 'D!:! %$!D! !?! #M!Z! !8!.! !M"?!7!?!7! '+!I!D! !?!O!:!M!:! ":!M!:! !M!7".!M! "8!+! !:!D! !.!M! *
+ %.!O!:! $.!O!+! !D!.! #M! "M!.!+!N!I!Z! "7!M!N!M!N!?!I!7!Z!=!M'D"~! #M!.!8!$! !:! !.!M! "N!?! !,!O! )
+ !.!?!M!:!M!I! %8!,! "M!.! #M! "N! !M!.! !M!.! !+!~! !.!M!.! ':!M! $M! $M!Z!$! !M!.! "D! "M! "?!M! (
+ !7!8! !+!I! ".! "$!=! ":!$! "+! !M!.! !O! !M!I!M".! !=!~! ",!O! '=!M! $$!,! #N!:! ":!8!.! !D!~! !,!M!.! !:!M!.! &
+ !:!,!.! &Z" #D! !.!8!."M!.! !8!?!Z!M!.!M! #Z!~! !?!M!Z!.! %~!O!.!8!$!N!8!O!I!:!~! !+! #M!.! !.!M!.! !+!M! ".!~!M!+! $
+ !.! 'D!I! #?!M!.!M!,! !.!Z! !.!8! #M&O!I!?! (~!I!M"." !M!Z!.! !M!N!.! "+!$!.! "M!.! !M!?!.! "8!M! $
+ (O!8! $M! !M!.! ".!:! !+!=! #M! #.!M! !+" *$!M":!.! !M!~! "M!7! #M! #7!Z! "M"$!M!.! !.! #
+ '$!Z! #.!7!+!M! $.!,! !+!:! #N! #.!M!.!+!M! +D!M! #=!N! ":!O! #=!M! #Z!D! $M!I! %
+ $,! ".! $.!M" %$!.! !?!~! "+!7!." !.!M!,! !M! *,!N!M!.$M!?! "D!,! #M!.! #N! +
+ ,M!Z! &M! "I!,! "M! »«:cperl-hash-face:%I»«s:!M! !?!=!.! (Z!8!M! $:!M!.! !,!M! $D! #.!M!.! )
+ +8!O! &.!8! "I!,! !~!M! &N!M! !M!D! '?!N!O!." $?!7! "?!~! #M!.! #I!D!.! (
+ 3M!,! "N!.! !D" &.!+!M!.! !M":!.":!M!7!M!D! 'M!.! "M!.! "M!,! $I! )
+ 3I! #M! "M!,! !:! &.!M" ".!,! !.!$!M!I! #.! !:! !.!M!?! "N!+! ".! /
+ 1M!,! #.!M!8!M!=!.! +~!N"O!Z"~! *+!M!.! "M! 2
+ 0.!M! &M!.! 8:! %.!M!Z! "M!=! *O!,! %
+ 0?!$! &N! )." .,! %."M! ":!M!.! 0
+ 0N!:! %?!O! #.! ..! &,! &.!D!,! "N!I! 0
+»«c:CATHY»«x:
+»    «k:return» App::Ack::__pic($x);
+}
+
+«k:sub» «f:__pic» {
+    «k:my»(«v:$compressed») = «:cperl-array-face:@_»;
+    $compressed =~ «:cperl-nonoverridable-face:s»«c:/»«k:(»«f:.»«k:)(»«f:.»«k:)»«c:/»$1x(«t:ord»($2)-32)«c:/»«:cperl-nonoverridable-face:eg»;
+    App::Ack::«:cperl-nonoverridable-face:print»( $compressed );
+    «k:exit» 0;
+}
+
+
+«k:sub» «f:show_help» {
+    «k:my» «v:$help_arg» = «:cperl-nonoverridable-face:shift» || 0;
+
+    «k:return» show_help_types() «k:if» $help_arg =~ «c:/»«f:^»«s:types»«b:?»«c:/»;
+
+    App::Ack::«:cperl-nonoverridable-face:print»( <<«s:"»«c:END_OF_HELP»«s:"» );
+«s:Usage: ack [OPTION]... PATTERN [FILES OR DIRECTORIES]
+
+Search for PATTERN in each source file in the tree from the current
+directory on down.  If any files or directories are specified, then
+only those files and directories are checked.  ack may also search
+STDIN, but only if no file or directory arguments are specified,
+or if one of them is "-".
+
+Default switches may be specified in ACK_OPTIONS environment variable or
+an .ackrc file. If you want no dependency on the environment, turn it
+off with --noenv.
+
+Example: ack -i select
+
+Searching:
+  -i, --ignore-case             Ignore case distinctions in PATTERN
+  --[no]smart-case              Ignore case distinctions in PATTERN,
+                                only if PATTERN contains no upper case.
+                                Ignored if -i is specified
+  -v, --invert-match            Invert match: select non-matching lines
+  -w, --word-regexp             Force PATTERN to match only whole words
+  -Q, --literal                 Quote all metacharacters; PATTERN is literal
+
+Search output:
+  --lines=NUM                   Only print line(s) NUM of each file
+  -l, --files-with-matches      Only print filenames containing matches
+  -L, --files-without-matches   Only print filenames with no matches
+  --output=expr                 Output the evaluation of expr for each line
+                                (turns off text highlighting)
+  -o                            Show only the part of a line matching PATTERN
+                                Same as --output='\$&'
+  --passthru                    Print all lines, whether matching or not
+  --match PATTERN               Specify PATTERN explicitly.
+  -m, --max-count=NUM           Stop searching in each file after NUM matches
+  -1                            Stop searching after one match of any kind
+  -H, --with-filename           Print the filename for each match (default:
+                                on unless explicitly searching a single file)
+  -h, --no-filename             Suppress the prefixing filename on output
+  -c, --count                   Show number of lines matching per file
+  --[no]column                  Show the column number of the first match
+
+  -A NUM, --after-context=NUM   Print NUM lines of trailing context after
+                                matching lines.
+  -B NUM, --before-context=NUM  Print NUM lines of leading context before
+                                matching lines.
+  -C [NUM], --context[=NUM]     Print NUM lines (default 2) of output context.
+
+  --print0                      Print null byte as separator between filenames,
+                                only works with -f, -g, -l, -L or -c.
+
+  -s                            Suppress error messages about nonexistent or
+                                unreadable files.
+
+
+File presentation:
+  --pager=COMMAND               Pipes all ack output through COMMAND.  For
+                                example, --pager="less -R".  Ignored if output
+                                is redirected.
+  --nopager                     Do not send output through a pager.  Cancels
+                                any setting in ~/.ackrc, ACK_PAGER or
+                                ACK_PAGER_COLOR.
+  --[no]heading                 Print a filename heading above each file's
+                                results.  (default: on when used interactively)
+  --[no]break                   Print a break between results from different
+                                files.  (default: on when used interactively)
+  --group                       Same as --heading --break
+  --nogroup                     Same as --noheading --nobreak
+  --[no]color                   Highlight the matching text (default: on unless
+                                output is redirected, or on Windows)
+  --[no]colour                  Same as --[no]color
+  --color-filename=COLOR
+  --color-match=COLOR
+  --color-lineno=COLOR          Set the color for filenames, matches, and line
+                                numbers.
+  --flush                       Flush output immediately, even when ack is used
+                                non-interactively (when output goes to a pipe or
+                                file).
+
+
+File finding:
+  -f                            Only print the files selected, without
+                                searching.  The PATTERN must not be specified.
+  -g                            Same as -f, but only select files matching
+                                PATTERN.
+  --sort-files                  Sort the found files lexically.
+  --show-types                  Show which types each file has.
+  --files-from=FILE             Read the list of files to search from FILE.
+  -x                            Read the list of files to search from STDIN.
+
+File inclusion/exclusion:
+  --[no]ignore-dir=name         Add/remove directory from list of ignored dirs
+  --[no]ignore-directory=name   Synonym for ignore-dir
+  --ignore-file=filter          Add filter for ignoring files
+  -r, -R, --recurse             Recurse into subdirectories (default: on)
+  -n, --no-recurse              No descending into subdirectories
+  --[no]follow                  Follow symlinks.  Default is off.
+  -k, --known-types             Include only files of types that ack recognizes.
+
+  --type=X                      Include only X files, where X is a recognized
+                                filetype.
+  --type=noX                    Exclude X files.
+                                See "ack --help-types" for supported filetypes.
+
+File type specification:
+  --type-set TYPE:FILTER:FILTERARGS
+                                Files with the given FILTERARGS applied to the
+                                given FILTER are recognized as being of type
+                                TYPE. This replaces an existing definition for
+                                type TYPE.
+  --type-add TYPE:FILTER:FILTERARGS
+                                Files with the given FILTERARGS applied to the
+                                given FILTER are recognized as being type TYPE.
+  --type-del TYPE               Removes all filters associated with TYPE.
+
+
+Miscellaneous:
+  --[no]env                     Ignore environment variables and global ackrc
+                                files.  --env is legal but redundant.
+  --ackrc=filename              Specify an ackrc file to use
+  --ignore-ack-defaults         Ignore default definitions included with ack.
+  --create-ackrc                Outputs a default ackrc for your customization
+                                to standard output.
+  --help, -?                    This help
+  --help-types                  Display all known types
+  --dump                        Dump information on which options are loaded
+                                from which RC files
+  --[no]filter                  Force ack to treat standard input as a pipe
+                                (--filter) or tty (--nofilter)
+  --man                         Man page
+  --version                     Display version & copyright
+  --thpppt                      Bill the Cat
+  --bar                         The warning admiral
+  --cathy                       Chocolate! Chocolate! Chocolate!
+
+Exit status is 0 if match, 1 if no match.
+
+ack's home page is at http://beyondgrep.com/
+
+The full ack manual is available by running "ack --man".
+
+This is version $VERSION of ack.  Run "ack --version" for full version info.
+»«c:END_OF_HELP»«x:
+»
+    «k:return»;
+ }
+
+
+
+«k:sub» «f:show_help_types» {
+    App::Ack::«:cperl-nonoverridable-face:print»( <<«s:'»«c:END_OF_HELP»«s:'» );
+«s:Usage: ack [OPTION]... PATTERN [FILES OR DIRECTORIES]
+
+The following is the list of filetypes supported by ack.  You can
+specify a file type with the --type=TYPE format, or the --TYPE
+format.  For example, both --type=perl and --perl work.
+
+Note that some extensions may appear in multiple types.  For example,
+.pod files are both Perl and Parrot.
+
+»«c:END_OF_HELP»«x:
+»
+    «k:my» «:cperl-array-face:@types» = filetypes_supported();
+    «k:my» «v:$maxlen» = 0;
+    «k:for» ( «:cperl-array-face:@types» ) {
+        $maxlen = «t:length» «k:if» $maxlen < «t:length»;
+    }
+    «k:for» «k:my» «v:$type» ( «:cperl-nonoverridable-face:sort» «:cperl-array-face:@types» ) {
+        «k:next» «k:if» $type =~ «c:/»«f:^»«s:-»«c:/»; «m:# »«x:Stuff to not show
+»        «k:my» «v:$ext_list» = «:cperl-hash-face:$mappings»{$type};
+
+        «k:if» ( «t:ref» $ext_list ) {
+            $ext_list = «t:join»( «s:'; '», «:cperl-nonoverridable-face:map» { $_->to_string } @{$ext_list} );
+        }
+        App::Ack::«:cperl-nonoverridable-face:print»( «t:sprintf»( «s:"    --[no]%-*.*s »«:cperl-hash-face:%s»«s:\n"», $maxlen, $maxlen, $type, $ext_list ) );
+    }
+
+    «k:return»;
+}
+
+«k:sub» «f:show_man» {
+    «k:require» «f:Pod::Usage»;
+
+    Pod::Usage::pod2usage({
+        «s:-input»   => $App::Ack::orig_program_name,
+        «s:-verbose» => 2,
+        «s:-exitval» => 0,
+    });
+
+    «k:return»;
+}
+
+
+«k:sub» «f:get_version_statement» {
+    «k:require» «f:Config»;
+
+    «k:my» «v:$copyright» = get_copyright();
+    «k:my» «v:$this_perl» = «:cperl-hash-face:$Config::Config»{«s:perlpath»};
+    «k:if» ($^O «t:ne» «s:'VMS'») {
+        «k:my» «v:$ext» = «:cperl-hash-face:$Config::Config»{«s:_exe»};
+        $this_perl .= $ext «k:unless» $this_perl =~ «:cperl-nonoverridable-face:m»«c:/»«v:$ext»«f:$»«c:/»«:cperl-nonoverridable-face:i»;
+    }
+    «k:my» «v:$ver» = «t:sprintf»( «s:'»«:cperl-hash-face:%vd»«s:'», $^V );
+
+    «k:return» <<«s:"»«c:END_OF_VERSION»«s:"»;
+«s:ack ${VERSION}
+Running under Perl $ver at $this_perl
+
+$copyright
+
+This program is free software.  You may modify or distribute it
+under the terms of the Artistic License v2.0.
+»«c:END_OF_VERSION»«x:
+»}
+
+
+«k:sub» «f:print_version_statement» {
+    App::Ack::«:cperl-nonoverridable-face:print»( get_version_statement() );
+
+    «k:return»;
+}
+
+
+«k:sub» «f:get_copyright» {
+    «k:return» $COPYRIGHT;
+}
+
+
+«m:# »«x:print*() subs added in order to make it easy for a third party
+»«m:# »«x:module (such as App::Wack) to redefine the display methods
+»«m:# »«x:and show the results in a different way.
+»«k:sub» «:cperl-nonoverridable-face:print»                   { «:cperl-nonoverridable-face:print» {$fh} «:cperl-array-face:@_»; «k:return»; }
+«k:sub» «f:print_first_filename»    { App::Ack::«:cperl-nonoverridable-face:print»( «:cperl-array-face:$_»[0], «s:"\n"» ); «k:return»; }
+«k:sub» «f:print_blank_line»        { App::Ack::«:cperl-nonoverridable-face:print»( «s:"\n"» ); «k:return»; }
+«k:sub» «f:print_separator»         { App::Ack::«:cperl-nonoverridable-face:print»( «s:"--\n"» ); «k:return»; }
+«k:sub» «f:print_filename»          { App::Ack::«:cperl-nonoverridable-face:print»( «:cperl-array-face:$_»[0], «:cperl-array-face:$_»[1] ); «k:return»; }
+«k:sub» «f:print_line_no»           { App::Ack::«:cperl-nonoverridable-face:print»( «:cperl-array-face:$_»[0], «:cperl-array-face:$_»[1] ); «k:return»; }
+«k:sub» «f:print_column_no»         { App::Ack::«:cperl-nonoverridable-face:print»( «:cperl-array-face:$_»[0], «:cperl-array-face:$_»[1] ); «k:return»; }
+«k:sub» «f:print_count» {
+    «k:my» «v:$filename» = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$nmatches» = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$ors» = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$count» = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$show_filename» = «:cperl-nonoverridable-face:shift»;
+
+    «k:if» ($show_filename) {
+        App::Ack::«:cperl-nonoverridable-face:print»( $filename );
+        App::Ack::«:cperl-nonoverridable-face:print»( «s:':'», $nmatches ) «k:if» $count;
+    }
+    «k:else» {
+        App::Ack::«:cperl-nonoverridable-face:print»( $nmatches ) «k:if» $count;
+    }
+    App::Ack::«:cperl-nonoverridable-face:print»( $ors );
+
+    «k:return»;
+}
+
+«k:sub» «f:print_count0» {
+    «k:my» «v:$filename» = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$ors» = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$show_filename» = «:cperl-nonoverridable-face:shift»;
+
+    «k:if» ($show_filename) {
+        App::Ack::«:cperl-nonoverridable-face:print»( $filename, «s:':0'», $ors );
+    }
+    «k:else» {
+        App::Ack::«:cperl-nonoverridable-face:print»( «s:'0'», $ors );
+    }
+
+    «k:return»;
+}
+
+«k:sub» «f:set_up_pager» {
+    «k:my» «v:$command» = «:cperl-nonoverridable-face:shift»;
+
+    «k:return» «k:if» App::Ack::output_to_pipe();
+
+    «k:my» «v:$pager»;
+    «k:if» ( «t:not» «t:open»( $pager, «s:'|-'», $command ) ) {
+        App::Ack::«k:die»( «:cperl-nonoverridable-face:qq»«s:{Unable to pipe to pager "$command": $!}» );
+    }
+    $fh = $pager;
+
+    «k:return»;
+}
+
+
+«k:sub» «f:output_to_pipe» {
+    «k:return» $output_to_pipe;
+}
+
+
+«k:sub» «f:exit_from_ack» {
+    «k:my» «v:$nmatches» = «:cperl-nonoverridable-face:shift»;
+
+    «k:my» «v:$rc» = $nmatches ? 0 : 1;
+    «k:exit» $rc;
+}
+
+
+
+1; «m:# »«x:End of App::Ack
+»«k:package» «f:App::Ack::Resource»;
+
+
+«k:use» «f:warnings»;
+«k:use» «f:strict»;
+«k:use» overload
+    «s:'""'» => «s:'name'»;
+
+«k:sub» «f:FAIL» {
+    «k:require» «f:Carp»;
+    Carp::confess( «s:'Must be overloaded'» );
+}
+
+
+«k:sub» «f:new» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «f:name» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «f:is_binary» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «t:open» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «f:needs_line_scan» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «t:reset» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «t:close» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «f:clone» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «f:firstliney» {
+    «k:return» FAIL();
+}
+
+1;
+«k:package» «f:App::Ack::Resources»;
+
+
+
+«k:use» «f:warnings»;
+«k:use» «f:strict»;
+
+«k:sub» «f:_generate_error_handler» {
+    «k:my» «v:$opt» = «:cperl-nonoverridable-face:shift»;
+
+    «k:if» ( $opt->{«s:dont_report_bad_filenames»} ) {
+        «k:return» «k:sub» {
+            «k:my» «v:$msg» = «:cperl-nonoverridable-face:shift»;
+            «m:# »«x:XXX restricting to specific error messages for now; I would
+»            «m:#     »«x:prefer a different way of doing this
+»            «k:if» ( $msg =~ «c:/»«s:Permission denied»«c:/» ) {
+                «k:return»;
+            }
+            App::Ack::«t:warn»( $msg );
+        };
+    }
+    «k:else» {
+        «k:return» «k:sub» {
+            «k:my» «v:$msg» = «:cperl-nonoverridable-face:shift»;
+            App::Ack::«t:warn»( $msg );
+        };
+    }
+}
+
+
+«k:sub» «f:from_argv» {
+    «k:my» «v:$class» = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$opt»   = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$start» = «:cperl-nonoverridable-face:shift»;
+
+    «k:my» «v:$self» = «t:bless» {}, $class;
+
+    «k:my» «v:$file_filter»    = «:cperl-nonoverridable-face:undef»;
+    «k:my» «v:$descend_filter» = $opt->{«s:descend_filter»};
+
+    «k:if»( $opt->{«s:n»} ) {
+        $descend_filter = «k:sub» {
+            «k:return» 0;
+        };
+    }
+
+    $self->{«s:iter»} =
+        File::Next::files( {
+            «s:file_filter»     => $opt->{«s:file_filter»},
+            «s:descend_filter»  => $descend_filter,
+            «s:error_handler»   => _generate_error_handler($opt),
+            «s:warning_handler» => «k:sub» {},
+            «s:sort_files»      => $opt->{«s:sort_files»},
+            «s:follow_symlinks» => $opt->{«s:follow»},
+        }, @{$start} );
+
+    «k:return» $self;
+}
+
+
+«k:sub» «f:from_file» {
+    «k:my» «v:$class» = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$opt»   = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$file»  = «:cperl-nonoverridable-face:shift»;
+
+    «k:my» «v:$iter» =
+        File::Next::from_file( {
+            «s:error_handler»   => _generate_error_handler($opt),
+            «s:warning_handler» => _generate_error_handler($opt),
+            «s:sort_files»      => $opt->{«s:sort_files»},
+        }, $file ) «t:or» «k:return» «:cperl-nonoverridable-face:undef»;
+
+    «k:return» «t:bless» {
+        «s:iter» => $iter,
+    }, $class;
+}
+
+«m:# »«x:This is for reading input lines from STDIN, not the list of files from STDIN
+»«k:sub» «f:from_stdin» {
+    «k:my» «v:$class» = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$opt»   = «:cperl-nonoverridable-face:shift»;
+
+    «k:my» «v:$self»  = «t:bless» {}, $class;
+
+    «k:my» «v:$has_been_called» = 0;
+
+    $self->{«s:iter»} = «k:sub» {
+        «k:if» ( «n:!»$has_been_called ) {
+            $has_been_called = 1;
+            «k:return» «s:'-'»;
+        }
+        «k:return»;
+    };
+
+    «k:return» $self;
+}
+
+«k:sub» «k:next» {
+    «k:my» «v:$self» = «:cperl-nonoverridable-face:shift»;
+
+    «k:my» «v:$file» = $self->{«s:iter»}->() «t:or» «k:return»;
+
+    «k:return» App::Ack::Resource::Basic->new( $file );
+}
+
+1;
+«k:package» «f:App::Ack::Resource::Basic»;
+
+
+«k:use» «f:warnings»;
+«k:use» «f:strict»;
+
+«k:use» «f:Fcntl» ();
+
+«k:BEGIN» {
+    «k:our» «:cperl-array-face:@ISA» = «s:'App::Ack::Resource'»;
+}
+
+
+
+«k:sub» «f:new» {
+    «k:my» «v:$class»    = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$filename» = «:cperl-nonoverridable-face:shift»;
+
+    «k:my» «v:$self» = «t:bless» {
+        «s:filename» => $filename,
+        «s:fh»       => «:cperl-nonoverridable-face:undef»,
+        «s:opened»   => 0,
+    }, $class;
+
+    «k:if» ( $self->{«s:filename»} «t:eq» «s:'-'» ) {
+        $self->{«s:fh»}     = *STDIN;
+        $self->{«s:opened»} = 1;
+    }
+
+    «k:return» $self;
+}
+
+
+«k:sub» «f:name» {
+    «k:return» «:cperl-array-face:$_»[0]->{«s:filename»};
+}
+
+
+
+«k:sub» «f:needs_line_scan» {
+    «k:my» «v:$self»  = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$opt»   = «:cperl-nonoverridable-face:shift»;
+
+    «k:return» 1 «k:if» $opt->{«s:v»};
+
+    «k:my» «v:$size» = «f:-»«:cperl-nonoverridable-face:s» $self->{«s:fh»};
+    «k:if» ( $size == 0 ) {
+        «k:return» 0;
+    }
+    «k:elsif» ( $size > 100_000 ) {
+        «k:return» 1;
+    }
+
+    «k:my» «v:$buffer»;
+    «k:my» «v:$rc» = «t:sysread»( $self->{«s:fh»}, $buffer, $size );
+    «k:if» ( «n:!»«:cperl-nonoverridable-face:defined»($rc) && $App::Ack::report_bad_filenames ) {
+        App::Ack::«t:warn»( «s:"$self->{filename}: $!"» );
+        «k:return» 1;
+    }
+    «k:return» 0 «k:unless» $rc && ( $rc == $size );
+
+    «k:my» «v:$regex» = $opt->{«s:regex»};
+    «k:return» $buffer =~ «c:/»«v:$regex»«c:/»«:cperl-nonoverridable-face:m»;
+}
+
+
+«k:sub» «t:reset» {
+    «k:my» «v:$self» = «:cperl-nonoverridable-face:shift»;
+
+    «m:# »«x:return if we haven't opened the file yet
+»    «k:if» ( «n:!»«:cperl-nonoverridable-face:defined»($self->{«s:fh»}) ) {
+        «k:return»;
+    }
+
+    «k:if»( «n:!»«t:seek»( $self->{«s:fh»}, 0, 0 ) && $App::Ack::report_bad_filenames ) {
+        App::Ack::«t:warn»( «s:"$self->{filename}: $!"» );
+    }
+
+    «k:return»;
+}
+
+
+«k:sub» «t:close» {
+    «k:my» «v:$self» = «:cperl-nonoverridable-face:shift»;
+
+    «m:# »«x:return if we haven't opened the file yet
+»    «k:if» ( «n:!»«:cperl-nonoverridable-face:defined»($self->{«s:fh»}) ) {
+        «k:return»;
+    }
+
+    «k:if» ( «n:!»«t:close»($self->{«s:fh»}) && $App::Ack::report_bad_filenames ) {
+        App::Ack::«t:warn»( $self->name() . «s:": $!"» );
+    }
+
+    $self->{«s:opened»} = 0;
+
+    «k:return»;
+}
+
+
+«k:sub» «f:clone» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:return» «t:__PACKAGE__»->new($self->name);
+}
+
+«k:sub» «f:firstliney» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$fh» = $self->«t:open»();
+
+    «k:if» ( «n:!»«:cperl-nonoverridable-face:exists» $self->{«s:firstliney»} ) {
+        «k:my» «v:$buffer» = «s:''»;
+        «k:my» «v:$rc»     = «t:sysread»( $fh, $buffer, 250 );
+        «k:unless»($rc) { «m:# »«x:XXX handle this better?
+»            $buffer = «s:''»;
+        }
+        $buffer =~ «:cperl-nonoverridable-face:s»«c:/»«f:[»«s:\r\n»«f:].»«b:*»«c:/»/«:cperl-nonoverridable-face:s»;
+        $self->{«s:firstliney»} = $buffer;
+        $self->«t:reset»;
+    }
+
+    $self->«t:close»;
+
+    «k:return» $self->{«s:firstliney»};
+}
+
+«k:sub» «t:open» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:return» $self->{«s:fh»} «k:if» $self->{«s:opened»};
+
+    «k:if» ( «n:!» «t:open» $self->{«s:fh»}, «s:'<'», $self->{«s:filename»} ) {
+        «k:return»;
+    }
+
+    $self->{«s:opened»} = 1;
+
+    «k:return» $self->{«s:fh»};
+}
+
+1;
+«k:package» «f:App::Ack::ConfigDefault»;
+
+«k:use» «f:warnings»;
+«k:use» «f:strict»;
+
+
+
+«k:sub» «f:options» {
+    «k:return» «:cperl-nonoverridable-face:split»( «c:/»«b:\»«t:n»«c:/», _options_block() );
+}
+
+
+«k:sub» «f:options_clean» {
+    «k:return» «:cperl-nonoverridable-face:grep» { «c:/»«f:.»«c:/» && «n:!»«c:/»«f:^»«s:#»«c:/» } options();
+}
+
+
+«k:sub» «f:_options_block» {
+    «k:my» «v:$lines» = <<«s:'»«c:HERE»«s:'»;
+«s:# This is the default ackrc for ack version ==VERSION==.
+
+# There are four different ways to match
+#
+# is:  Match the filename exactly
+#
+# ext: Match the extension of the filename exactly
+#
+# match: Match the filename against a Perl regular expression
+#
+# firstlinematch: Match the first 250 characters of the first line
+#   of text against a Perl regular expression.  This is only for
+#   the --type-add option.
+
+
+### Directories to ignore
+
+# Bazaar
+# http://bazaar.canonical.com/
+--ignore-directory=is:.bzr
+
+# Codeville
+# http://freecode.com/projects/codeville
+--ignore-directory=is:.cdv
+
+# Interface Builder (Xcode)
+# http://en.wikipedia.org/wiki/Interface_Builder
+--ignore-directory=is:~.dep
+--ignore-directory=is:~.dot
+--ignore-directory=is:~.nib
+--ignore-directory=is:~.plst
+
+# Git
+# http://git-scm.com/
+--ignore-directory=is:.git
+
+# Mercurial
+# http://mercurial.selenic.com/
+--ignore-directory=is:.hg
+
+# quilt
+# http://directory.fsf.org/wiki/Quilt
+--ignore-directory=is:.pc
+
+# Subversion
+# http://subversion.tigris.org/
+--ignore-directory=is:.svn
+
+# Monotone
+# http://www.monotone.ca/
+--ignore-directory=is:_MTN
+
+# CVS
+# http://savannah.nongnu.org/projects/cvs
+--ignore-directory=is:CVS
+
+# RCS
+# http://www.gnu.org/software/rcs/
+--ignore-directory=is:RCS
+
+# SCCS
+# http://en.wikipedia.org/wiki/Source_Code_Control_System
+--ignore-directory=is:SCCS
+
+# darcs
+# http://darcs.net/
+--ignore-directory=is:_darcs
+
+# Vault/Fortress
+--ignore-directory=is:_sgbak
+
+# autoconf
+# http://www.gnu.org/software/autoconf/
+--ignore-directory=is:autom4te.cache
+
+# Perl module building
+--ignore-directory=is:blib
+--ignore-directory=is:_build
+
+# Perl Devel::Cover module's output directory
+# https://metacpan.org/release/Devel-Cover
+--ignore-directory=is:cover_db
+
+# Node modules created by npm
+--ignore-directory=is:node_modules
+
+# CMake cache
+# http://www.cmake.org/
+--ignore-directory=is:CMakeFiles
+
+# Eclipse workspace folder
+# http://eclipse.org/
+--ignore-directory=is:.metadata
+
+# Cabal (Haskell) sandboxes
+# http://www.haskell.org/cabal/users-guide/installing-packages.html
+--ignore-directory=is:.cabal-sandbox
+
+### Files to ignore
+
+# Backup files
+--ignore-file=ext:bak
+--ignore-file=match:/~$/
+
+# Emacs swap files
+--ignore-file=match:/^#.+#$/
+
+# vi/vim swap files http://vim.org/
+--ignore-file=match:/[._].*\.swp$/
+
+# core dumps
+--ignore-file=match:/core\.\d+$/
+
+# minified Javascript
+--ignore-file=match:/[.-]min[.]js$/
+--ignore-file=match:/[.]js[.]min$/
+
+# minified CSS
+--ignore-file=match:/[.]min[.]css$/
+--ignore-file=match:/[.]css[.]min$/
+
+# JS and CSS source maps
+--ignore-file=match:/[.]js[.]map$/
+--ignore-file=match:/[.]css[.]map$/
+
+# PDFs, because they pass Perl's -T detection
+--ignore-file=ext:pdf
+
+# Common graphics, just as an optimization
+--ignore-file=ext:gif,jpg,jpeg,png
+
+
+### Filetypes defined
+
+# Perl
+# http://perl.org/
+--type-add=perl:ext:pl,pm,pod,t,psgi
+--type-add=perl:firstlinematch:/^#!.*\bperl/
+
+# Perl tests
+--type-add=perltest:ext:t
+
+# Makefiles
+# http://www.gnu.org/s/make/
+--type-add=make:ext:mk
+--type-add=make:ext:mak
+--type-add=make:is:makefile
+--type-add=make:is:Makefile
+--type-add=make:is:Makefile.Debug
+--type-add=make:is:Makefile.Release
+
+# Rakefiles
+# http://rake.rubyforge.org/
+--type-add=rake:is:Rakefile
+
+# CMake
+# http://www.cmake.org/
+--type-add=cmake:is:CMakeLists.txt
+--type-add=cmake:ext:cmake
+
+# Actionscript
+--type-add=actionscript:ext:as,mxml
+
+# Ada
+# http://www.adaic.org/
+--type-add=ada:ext:ada,adb,ads
+
+# ASP
+# http://msdn.microsoft.com/en-us/library/aa286483.aspx
+--type-add=asp:ext:asp
+
+# ASP.Net
+# http://www.asp.net/
+--type-add=aspx:ext:master,ascx,asmx,aspx,svc
+
+# Assembly
+--type-add=asm:ext:asm,s
+
+# Batch
+--type-add=batch:ext:bat,cmd
+
+# ColdFusion
+# http://en.wikipedia.org/wiki/ColdFusion
+--type-add=cfmx:ext:cfc,cfm,cfml
+
+# Clojure
+# http://clojure.org/
+--type-add=clojure:ext:clj
+
+# C
+# .xs are Perl C files
+--type-add=cc:ext:c,h,xs
+
+# C header files
+--type-add=hh:ext:h
+
+# CoffeeScript
+# http://coffeescript.org/
+--type-add=coffeescript:ext:coffee
+
+# C++
+--type-add=cpp:ext:cpp,cc,cxx,m,hpp,hh,h,hxx
+
+# C#
+--type-add=csharp:ext:cs
+
+# CSS
+# http://www.w3.org/Style/CSS/
+--type-add=css:ext:css
+
+# Dart
+# http://www.dartlang.org/
+--type-add=dart:ext:dart
+
+# Delphi
+# http://en.wikipedia.org/wiki/Embarcadero_Delphi
+--type-add=delphi:ext:pas,int,dfm,nfm,dof,dpk,dproj,groupproj,bdsgroup,bdsproj
+
+# Elixir
+# http://elixir-lang.org/
+--type-add=elixir:ext:ex,exs
+
+# Emacs Lisp
+# http://www.gnu.org/software/emacs
+--type-add=elisp:ext:el
+
+# Erlang
+# http://www.erlang.org/
+--type-add=erlang:ext:erl,hrl
+
+# Fortran
+# http://en.wikipedia.org/wiki/Fortran
+--type-add=fortran:ext:f,f77,f90,f95,f03,for,ftn,fpp
+
+# Go
+# http://golang.org/
+--type-add=go:ext:go
+
+# Groovy
+# http://groovy.codehaus.org/
+--type-add=groovy:ext:groovy,gtmpl,gpp,grunit,gradle
+
+# Haskell
+# http://www.haskell.org/
+--type-add=haskell:ext:hs,lhs
+
+# HTML
+--type-add=html:ext:htm,html
+
+# Jade
+# http://jade-lang.com/
+--type-add=jade:ext:jade
+
+# Java
+# http://www.oracle.com/technetwork/java/index.html
+--type-add=java:ext:java,properties
+
+# JavaScript
+--type-add=js:ext:js
+
+# JSP
+# http://www.oracle.com/technetwork/java/javaee/jsp/index.html
+--type-add=jsp:ext:jsp,jspx,jhtm,jhtml
+
+# JSON
+# http://www.json.org/
+--type-add=json:ext:json
+
+# Less
+# http://www.lesscss.org/
+--type-add=less:ext:less
+
+# Common Lisp
+# http://common-lisp.net/
+--type-add=lisp:ext:lisp,lsp
+
+# Lua
+# http://www.lua.org/
+--type-add=lua:ext:lua
+--type-add=lua:firstlinematch:/^#!.*\blua(jit)?/
+
+# Objective-C
+--type-add=objc:ext:m,h
+
+# Objective-C++
+--type-add=objcpp:ext:mm,h
+
+# OCaml
+# http://caml.inria.fr/
+--type-add=ocaml:ext:ml,mli
+
+# Matlab
+# http://en.wikipedia.org/wiki/MATLAB
+--type-add=matlab:ext:m
+
+# Parrot
+# http://www.parrot.org/
+--type-add=parrot:ext:pir,pasm,pmc,ops,pod,pg,tg
+
+# PHP
+# http://www.php.net/
+--type-add=php:ext:php,phpt,php3,php4,php5,phtml
+--type-add=php:firstlinematch:/^#!.*\bphp/
+
+# Plone
+# http://plone.org/
+--type-add=plone:ext:pt,cpt,metadata,cpy,py
+
+# Python
+# http://www.python.org/
+--type-add=python:ext:py
+--type-add=python:firstlinematch:/^#!.*\bpython/
+
+# R
+# http://www.r-project.org/
+--type-add=rr:ext:R
+
+# reStructured Text
+# http://docutils.sourceforge.net/rst.html
+--type-add=rst:ext:rst
+
+# Ruby
+# http://www.ruby-lang.org/
+--type-add=ruby:ext:rb,rhtml,rjs,rxml,erb,rake,spec
+--type-add=ruby:is:Rakefile
+--type-add=ruby:firstlinematch:/^#!.*\bruby/
+
+# Rust
+# http://www.rust-lang.org/
+--type-add=rust:ext:rs
+
+# Sass
+# http://sass-lang.com
+--type-add=sass:ext:sass,scss
+
+# Scala
+# http://www.scala-lang.org/
+--type-add=scala:ext:scala
+
+# Scheme
+# http://groups.csail.mit.edu/mac/projects/scheme/
+--type-add=scheme:ext:scm,ss
+
+# Shell
+--type-add=shell:ext:sh,bash,csh,tcsh,ksh,zsh,fish
+--type-add=shell:firstlinematch:/^#!.*\b(?:ba|t?c|k|z|fi)?sh\b/
+
+# Smalltalk
+# http://www.smalltalk.org/
+--type-add=smalltalk:ext:st
+
+# Smarty
+# http://www.smarty.net/
+--type-add=smarty:ext:tpl
+
+# SQL
+# http://www.iso.org/iso/catalogue_detail.htm?csnumber=45498
+--type-add=sql:ext:sql,ctl
+
+# Stylus
+# http://learnboost.github.io/stylus/
+--type-add=stylus:ext:styl
+
+# Tcl
+# http://www.tcl.tk/
+--type-add=tcl:ext:tcl,itcl,itk
+
+# LaTeX
+# http://www.latex-project.org/
+--type-add=tex:ext:tex,cls,sty
+
+# Template Toolkit (Perl)
+# http://template-toolkit.org/
+--type-add=tt:ext:tt,tt2,ttml
+
+# Visual Basic
+--type-add=vb:ext:bas,cls,frm,ctl,vb,resx
+
+# Verilog
+--type-add=verilog:ext:v,vh,sv
+
+# VHDL
+# http://www.eda.org/twiki/bin/view.cgi/P1076/WebHome
+--type-add=vhdl:ext:vhd,vhdl
+
+# Vim
+# http://www.vim.org/
+--type-add=vim:ext:vim
+
+# XML
+# http://www.w3.org/TR/REC-xml/
+--type-add=xml:ext:xml,dtd,xsl,xslt,ent
+--type-add=xml:firstlinematch:/<[?]xml/
+
+# YAML
+# http://yaml.org/
+--type-add=yaml:ext:yaml,yml
+»«c:HERE»«x:
+»    $lines =~ «:cperl-nonoverridable-face:s»«c:/»«s:==VERSION==»«c:/»«s:$App::Ack::VERSION»«c:/»«:cperl-nonoverridable-face:sm»;
+
+    «k:return» $lines;
+}
+
+1;
+«k:package» «f:App::Ack::ConfigFinder»;
+
+
+«k:use» «f:strict»;
+«k:use» «f:warnings»;
+
+«k:use» «f:Cwd» 3.00 ();
+«k:use» «f:File::Spec» 3.00;
+
+«k:use» «k:if» ($^O «t:eq» «s:'MSWin32'»), «s:'Win32'»;
+
+
+«k:sub» «f:new» {
+    «k:my» ( «v:$class» ) = «:cperl-array-face:@_»;
+
+    «k:return» «t:bless» {}, $class;
+}
+
+
+«k:sub» «f:_remove_redundancies» {
+    «k:my» «:cperl-array-face:@configs» = «:cperl-array-face:@_»;
+
+    «k:my» «:cperl-hash-face:%seen»;
+    «k:foreach» «k:my» «v:$config» («:cperl-array-face:@configs») {
+        «k:my» «v:$key» = $config->{«s:path»};
+        «k:if» ( «t:not» $App::Ack::is_windows ) {
+            «m:# »«x:On Unix, uniquify on inode.
+»            «k:my» («v:$dev», «v:$inode») = («t:stat» $key)[0, 1];
+            $key = «s:"$dev:$inode"» «k:if» «:cperl-nonoverridable-face:defined» $dev;
+        }
+        «:cperl-nonoverridable-face:undef» $config «k:if» «:cperl-hash-face:$seen»{$key}++;
+    }
+    «k:return» «:cperl-nonoverridable-face:grep» { «:cperl-nonoverridable-face:defined» } «:cperl-array-face:@configs»;
+}
+
+
+«k:sub» «f:_check_for_ackrc» {
+    «k:return» «k:unless» «:cperl-nonoverridable-face:defined» «:cperl-array-face:$_»[0];
+
+    «k:my» «:cperl-array-face:@files» = «:cperl-nonoverridable-face:grep» { «f:-f» }
+                «:cperl-nonoverridable-face:map» { File::Spec->catfile(«:cperl-array-face:@_», $_) }
+                «:cperl-nonoverridable-face:qw»«s:(.ackrc _ackrc)»;
+
+    «k:die» File::Spec->catdir(«:cperl-array-face:@_») . «s:" contains both .ackrc and _ackrc.\n"» .
+        «s:"Please remove one of those files.\n"»
+            «k:if» «:cperl-array-face:@files» > 1;
+
+    «k:return» «t:wantarray» ? «:cperl-array-face:@files» : «:cperl-array-face:$files»[0];
+} «m:# »«x:end _check_for_ackrc
+»
+
+
+«k:sub» «f:find_config_files» {
+    «k:my» «:cperl-array-face:@config_files»;
+
+    «k:if» ( $App::Ack::is_windows ) {
+        «:cperl-nonoverridable-face:push» «:cperl-array-face:@config_files», «:cperl-nonoverridable-face:map» { +{ «s:path» => File::Spec->catfile($_, «s:'ackrc'») } } (
+            Win32::GetFolderPath(Win32::CSIDL_COMMON_APPDATA()),
+            Win32::GetFolderPath(Win32::CSIDL_APPDATA()),
+        );
+    }
+    «k:else» {
+        «:cperl-nonoverridable-face:push» «:cperl-array-face:@config_files», { «s:path» => «s:'/etc/ackrc'» };
+    }
+
+
+    «k:if» ( «:cperl-hash-face:$ENV»{«s:'ACKRC'»} && «f:-f» «:cperl-hash-face:$ENV»{«s:'ACKRC'»} ) {
+        «:cperl-nonoverridable-face:push» «:cperl-array-face:@config_files», { «s:path» => «:cperl-hash-face:$ENV»{«s:'ACKRC'»} };
+    }
+    «k:else» {
+        «:cperl-nonoverridable-face:push» «:cperl-array-face:@config_files», «:cperl-nonoverridable-face:map» { +{ «s:path» => $_ } } _check_for_ackrc(«:cperl-hash-face:$ENV»{«s:'HOME'»});
+    }
+
+    «m:# »«x:XXX This should go through some untainted cwd-fetching function, and not get untainted inline like this.
+»    «k:my» «v:$cwd» = Cwd::getcwd();
+    $cwd =~ «c:/»«k:(»«f:.»«b:+»«k:)»«c:/»;
+    $cwd = $1;
+    «k:my» «:cperl-array-face:@dirs» = File::Spec->splitdir( $cwd );
+    «k:while»(«:cperl-array-face:@dirs») {
+        «k:my» «v:$ackrc» = _check_for_ackrc(«:cperl-array-face:@dirs»);
+        «k:if»(«:cperl-nonoverridable-face:defined» $ackrc) {
+            «:cperl-nonoverridable-face:push» «:cperl-array-face:@config_files», { «s:project» => 1, «s:path» => $ackrc };
+            «k:last»;
+        }
+        «:cperl-nonoverridable-face:pop» «:cperl-array-face:@dirs»;
+    }
+
+    «m:# »«x:We only test for existence here, so if the file is deleted out from under us, this will fail later.
+»    «k:return» _remove_redundancies( «:cperl-array-face:@config_files» );
+}
+
+
+
+«k:sub» «f:read_rcfile» {
+    «k:my» «v:$file» = «:cperl-nonoverridable-face:shift»;
+
+    «k:return» «k:unless» «:cperl-nonoverridable-face:defined» $file && «f:-e» $file;
+
+    «k:my» «:cperl-array-face:@lines»;
+
+    «t:open»( «k:my» «v:$fh», «s:'<'», $file ) «t:or» App::Ack::«k:die»( «s:"Unable to read $file: $!"» );
+    «k:while» ( «k:my» «v:$line» = <$fh> ) {
+        «:cperl-nonoverridable-face:chomp» $line;
+        $line =~ «:cperl-nonoverridable-face:s»«c:/»«f:^»«b:\»«t:s»«b:+»«c:/»/;
+        $line =~ «:cperl-nonoverridable-face:s»«c:/»«b:\»«t:s»«b:+»«f:$»«c:/»/;
+
+        «k:next» «k:if» $line «t:eq» «s:''»;
+        «k:next» «k:if» $line =~ «c:/»«f:^»«b:\»«t:s»«b:*»«s:#»«c:/»;
+
+        «:cperl-nonoverridable-face:push»( «:cperl-array-face:@lines», $line );
+    }
+    «t:close» $fh «t:or» App::Ack::«k:die»( «s:"Unable to close $file: $!"» );
+
+    «k:return» «:cperl-array-face:@lines»;
+}
+
+1;
+«k:package» «f:App::Ack::ConfigLoader»;
+
+«k:use» «f:strict»;
+«k:use» «f:warnings»;
+
+«k:use» «f:Carp» 1.04 ();
+«k:use» «f:Getopt::Long» 2.35 ();
+«k:use» «f:Text::ParseWords» 3.1 ();
+
+
+«k:my» «:cperl-array-face:@INVALID_COMBINATIONS»;
+
+«k:BEGIN» {
+    «k:my» «:cperl-array-face:@context»  = «:cperl-nonoverridable-face:qw»«s:( -A -B -C --after-context --before-context --context )»;
+    «k:my» «:cperl-array-face:@pretty»   = «:cperl-nonoverridable-face:qw»«s:( --heading --group --break )»;
+    «k:my» «:cperl-array-face:@filename» = «:cperl-nonoverridable-face:qw»«s:( -h -H --with-filename --no-filename )»;
+
+    «:cperl-array-face:@INVALID_COMBINATIONS» = (
+        «m:# »«x:XXX normalize
+»        [«:cperl-nonoverridable-face:qw»«s:(-l)»]                 => [«:cperl-array-face:@context», «:cperl-array-face:@pretty», «:cperl-array-face:@filename», «:cperl-nonoverridable-face:qw»«s:(-L -o --passthru --output --max-count --column -f -g --show-types)»],
+        [«:cperl-nonoverridable-face:qw»«s:(-L)»]                 => [«:cperl-array-face:@context», «:cperl-array-face:@pretty», «:cperl-array-face:@filename», «:cperl-nonoverridable-face:qw»«s:(-l -o --passthru --output --max-count --column -f -g --show-types -c --count)»],
+        [«:cperl-nonoverridable-face:qw»«s:(--line)»]             => [«:cperl-array-face:@context», «:cperl-array-face:@pretty», «:cperl-array-face:@filename», «:cperl-nonoverridable-face:qw»«s:(-l --files-with-matches --files-without-matches -L -o --passthru --match -m --max-count -1 -c --count --column --print0 -f -g --show-types)»],
+        [«:cperl-nonoverridable-face:qw»«s:(-o)»]                 => [«:cperl-array-face:@context», «:cperl-nonoverridable-face:qw»«s:(--output -c --count --column --column -f --show-types)»],
+        [«:cperl-nonoverridable-face:qw»«s:(--passthru)»]         => [«:cperl-array-face:@context», «:cperl-nonoverridable-face:qw»«s:(--output --column -m --max-count -1 -c --count -f -g)»],
+        [«:cperl-nonoverridable-face:qw»«s:(--output)»]           => [«:cperl-array-face:@context», «:cperl-nonoverridable-face:qw»«s:(-c --count -f -g)»],
+        [«:cperl-nonoverridable-face:qw»«s:(--match)»]            => [«:cperl-nonoverridable-face:qw»«s:(-f -g)»],
+        [«:cperl-nonoverridable-face:qw»«s:(-m --max-count)»]     => [«:cperl-nonoverridable-face:qw»«s:(-1 -f -g -c --count)»],
+        [«:cperl-nonoverridable-face:qw»«s:(-h --no-filename)»]   => [«:cperl-nonoverridable-face:qw»«s:(-H --with-filename -f -g --group --heading)»],
+        [«:cperl-nonoverridable-face:qw»«s:(-H --with-filename)»] => [«:cperl-nonoverridable-face:qw»«s:(-h --no-filename -f -g)»],
+        [«:cperl-nonoverridable-face:qw»«s:(-c --count)»]         => [«:cperl-array-face:@context», «:cperl-array-face:@pretty», «:cperl-nonoverridable-face:qw»«s:(--column -f -g)»],
+        [«:cperl-nonoverridable-face:qw»«s:(--column)»]           => [«:cperl-nonoverridable-face:qw»«s:(-f -g)»],
+        [«:cperl-array-face:@context»]               => [«:cperl-nonoverridable-face:qw»«s:(-f -g)»],
+        [«:cperl-nonoverridable-face:qw»«s:(-f)»]                 => [«:cperl-nonoverridable-face:qw»«s:(-g)», «:cperl-array-face:@pretty»],
+        [«:cperl-nonoverridable-face:qw»«s:(-g)»]                 => [«:cperl-nonoverridable-face:qw»«s:(-f)», «:cperl-array-face:@pretty»],
+    );
+}
+
+
+«k:sub» «f:process_filter_spec» {
+    «k:my» ( «v:$spec» ) = «:cperl-array-face:@_»;
+
+    «k:if» ( $spec =~ «c:/»«f:^»«k:(»«b:\»«t:w»«b:+»«k:)»«s::»«k:(»«b:\»«t:w»«b:+»«k:)»«s::»«k:(»«f:.»«b:*»«k:)»«c:/» ) {
+        «k:my» ( «v:$type_name», «v:$ext_type», «v:$arguments» ) = ( $1, $2, $3 );
+
+        «k:return» ( $type_name,
+            App::Ack::Filter->create_filter($ext_type, «:cperl-nonoverridable-face:split»(«c:/»«s:,»«c:/», $arguments)) );
+    }
+    «k:elsif» ( $spec =~ «c:/»«f:^»«k:(»«b:\»«t:w»«b:+»«k:)»«s:=»«k:(»«f:.»«b:*»«k:)»«c:/» ) { «m:# »«x:Check to see if we have ack1-style argument specification.
+»        «k:my» ( «v:$type_name», «v:$extensions» ) = ( $1, $2 );
+
+        «k:my» «:cperl-array-face:@extensions» = «:cperl-nonoverridable-face:split»(«c:/»«s:,»«c:/», $extensions);
+        «k:foreach» «k:my» «v:$extension» ( «:cperl-array-face:@extensions» ) {
+            $extension =~ «:cperl-nonoverridable-face:s»«c:/»«f:^[»«s:.»«f:]»«c:/»/;
+        }
+
+        «k:return» ( $type_name, App::Ack::Filter->create_filter(«s:'ext'», «:cperl-array-face:@extensions») );
+    }
+    «k:else» {
+        Carp::croak «s:"invalid filter specification '$spec'"»;
+    }
+}
+
+
+«k:sub» «f:uninvert_filter» {
+    «k:my» ( «v:$opt», «:cperl-array-face:@filters» ) = «:cperl-array-face:@_»;
+
+    «k:return» «k:unless» «:cperl-nonoverridable-face:defined» $opt->{«s:filters»} && «:cperl-array-face:@filters»;
+
+    «m:# »«x:Loop through all the registered filters.  If we hit one that
+»    «m:# »«x:matches this extension and it's inverted, we need to delete it from
+»    «m:# »«x:the options.
+»    «k:for» ( «k:my» «v:$i» = 0; $i < @{ $opt->{«s:filters»} }; $i++ ) {
+        «k:my» «v:$opt_filter» = @{ $opt->{«s:filters»} }[$i];
+
+        «m:# »«x:XXX Do a real list comparison? This just checks string equivalence.
+»        «k:if» ( $opt_filter->is_inverted() && «s:"$opt_filter->{filter}"» «t:eq» «s:"»«:cperl-array-face:@filters»«s:"» ) {
+            «:cperl-nonoverridable-face:splice» @{ $opt->{«s:filters»} }, $i, 1;
+            $i--;
+        }
+    }
+}
+
+
+«k:sub» «f:process_filetypes» {
+    «k:my» ( «v:$opt», «v:$arg_sources» ) = «:cperl-array-face:@_»;
+
+    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»); «m:# »«x:start with default options, minus some annoying ones
+»    Getopt::Long::Configure(
+        «s:'no_ignore_case'»,
+        «s:'no_auto_abbrev'»,
+        «s:'pass_through'»,
+    );
+    «k:my» «:cperl-hash-face:%additional_specs»;
+
+    «k:my» «v:$add_spec» = «k:sub» {
+        «k:my» ( «:cperl-nonoverridable-face:undef», $spec ) = «:cperl-array-face:@_»;
+
+        «k:my» ( «v:$name», «v:$filter» ) = process_filter_spec($spec);
+
+        «:cperl-nonoverridable-face:push» @{ «:cperl-hash-face:$App::Ack::mappings»{$name} }, $filter;
+
+        «:cperl-hash-face:$additional_specs»{$name . «s:'!'»} = «k:sub» {
+            «k:my» ( «:cperl-nonoverridable-face:undef», $value ) = «:cperl-array-face:@_»;
+
+            «k:my» «:cperl-array-face:@filters» = @{ «:cperl-hash-face:$App::Ack::mappings»{$name} };
+            «k:if» ( «t:not» $value ) {
+                «:cperl-array-face:@filters» = «:cperl-nonoverridable-face:map» { $_->invert() } «:cperl-array-face:@filters»;
+            }
+            «k:else» {
+                uninvert_filter( $opt, «:cperl-array-face:@filters» );
+            }
+
+            «:cperl-nonoverridable-face:push» @{ $opt->{«s:'filters'»} }, «:cperl-array-face:@filters»;
+        };
+    };
+
+    «k:my» «v:$set_spec» = «k:sub» {
+        «k:my» ( «:cperl-nonoverridable-face:undef», $spec ) = «:cperl-array-face:@_»;
+
+        «k:my» ( «v:$name», «v:$filter» ) = process_filter_spec($spec);
+
+        «:cperl-hash-face:$App::Ack::mappings»{$name} = [ $filter ];
+
+        «:cperl-hash-face:$additional_specs»{$name . «s:'!'»} = «k:sub» {
+            «k:my» ( «:cperl-nonoverridable-face:undef», $value ) = «:cperl-array-face:@_»;
+
+            «k:my» «:cperl-array-face:@filters» = @{ «:cperl-hash-face:$App::Ack::mappings»{$name} };
+            «k:if» ( «t:not» $value ) {
+                «:cperl-array-face:@filters» = «:cperl-nonoverridable-face:map» { $_->invert() } «:cperl-array-face:@filters»;
+            }
+
+            «:cperl-nonoverridable-face:push» @{ $opt->{«s:'filters'»} }, «:cperl-array-face:@filters»;
+        };
+    };
+
+    «k:my» «v:$delete_spec» = «k:sub» {
+        «k:my» ( «:cperl-nonoverridable-face:undef», $name ) = «:cperl-array-face:@_»;
+
+        «:cperl-nonoverridable-face:delete» «:cperl-hash-face:$App::Ack::mappings»{$name};
+        «:cperl-nonoverridable-face:delete» «:cperl-hash-face:$additional_specs»{$name . «s:'!'»};
+    };
+
+    «k:my» «:cperl-hash-face:%type_arg_specs» = (
+        «s:'type-add=s'» => $add_spec,
+        «s:'type-set=s'» => $set_spec,
+        «s:'type-del=s'» => $delete_spec,
+    );
+
+    «k:foreach» «k:my» «v:$source» (@{$arg_sources}) {
+        «k:my» ( «v:$source_name», «v:$args» ) = @{$source}{«:cperl-nonoverridable-face:qw»«s:/name contents/»};
+
+        «k:if» ( «t:ref»($args) ) {
+            «m:# »«x:$args are modified in place, so no need to munge $arg_sources
+»            «k:local» «:cperl-array-face:@ARGV» = @{$args};
+            Getopt::Long::GetOptions(«:cperl-hash-face:%type_arg_specs»);
+            @{$args} = «:cperl-array-face:@ARGV»;
+        }
+        «k:else» {
+            ( «:cperl-nonoverridable-face:undef», $source->{«s:contents»} ) =
+                Getopt::Long::GetOptionsFromString($args, «:cperl-hash-face:%type_arg_specs»);
+        }
+    }
+
+    «:cperl-hash-face:$additional_specs»{«s:'k|known-types'»} = «k:sub» {
+        «k:my» ( «:cperl-nonoverridable-face:undef», $value ) = «:cperl-array-face:@_»;
+
+        «k:my» «:cperl-array-face:@filters» = «:cperl-nonoverridable-face:map» { @{$_} } «t:values»(«:cperl-hash-face:%App::Ack::mappings»);
+
+        «:cperl-nonoverridable-face:push» @{ $opt->{«s:'filters'»} }, «:cperl-array-face:@filters»;
+    };
+
+    «k:return» \«:cperl-hash-face:%additional_specs»;
+}
+
+
+«k:sub» «f:removed_option» {
+    «k:my» ( «v:$option», «v:$explanation» ) = «:cperl-array-face:@_»;
+
+    $explanation ||= «s:''»;
+    «k:return» «k:sub» {
+        «t:warn» «s:"Option '$option' is not valid in ack 2\n$explanation"»;
+        «k:exit» 1;
+    };
+}
+
+
+«k:sub» «f:get_arg_spec» {
+    «k:my» ( «v:$opt», «v:$extra_specs» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$dash_a_explanation» = <<«s:'»«c:EOT»«s:'»;
+«s:This is because we now have -k/--known-types which makes it only select files
+of known types, rather than any text file (which is the behavior of ack 1.x).
+You may have options in a .ackrc, or in the ACKRC_OPTIONS environment variable.
+Try using the --dump flag.
+»«c:EOT»«x:
+»
+
+    «k:return» {
+        «s:1»                   => «k:sub» { $opt->{«s:1»} = $opt->{«s:m»} = 1 },
+        «s:'A|after-context=i'» => \$opt->{«s:after_context»},
+        «s:'B|before-context=i'»
+                            => \$opt->{«s:before_context»},
+        «s:'C|context:i'»       => «k:sub» { «:cperl-nonoverridable-face:shift»; «k:my» «v:$val» = «:cperl-nonoverridable-face:shift»; $opt->{«s:before_context»} = $opt->{«s:after_context»} = ($val || 2) },
+        «s:'a'»                 => removed_option(«s:'-a'», $dash_a_explanation),
+        «s:'all'»               => removed_option(«s:'--all'», $dash_a_explanation),
+        «s:'break!'»            => \$opt->{«s:break»},
+        «s:c»                   => \$opt->{«s:count»},
+        «s:'color|colour!'»     => \$opt->{«s:color»},
+        «s:'color-match=s'»     => \«:cperl-hash-face:$ENV»{«s:ACK_COLOR_MATCH»},
+        «s:'color-filename=s'»  => \«:cperl-hash-face:$ENV»{«s:ACK_COLOR_FILENAME»},
+        «s:'color-lineno=s'»    => \«:cperl-hash-face:$ENV»{«s:ACK_COLOR_LINENO»},
+        «s:'column!'»           => \$opt->{«s:column»},
+        «s:count»               => \$opt->{«s:count»},
+        «s:'create-ackrc'»      => «k:sub» { «:cperl-nonoverridable-face:print» «s:"$_\n"» «k:for» ( «s:'--ignore-ack-defaults'», App::Ack::ConfigDefault::options() ); «k:exit»; },
+        «s:'env!'»              => «k:sub» {
+            «k:my» ( «:cperl-nonoverridable-face:undef», $value ) = «:cperl-array-face:@_»;
+
+            «k:if» ( «n:!»$value ) {
+                $opt->{«s:noenv_seen»} = 1;
+            }
+        },
+        «s:f»                   => \$opt->{«s:f»},
+        «s:'files-from=s'»      => \$opt->{«s:files_from»},
+        «s:'filter!'»           => \$App::Ack::is_filter_mode,
+        «s:flush»               => \$opt->{«s:flush»},
+        «s:'follow!'»           => \$opt->{«s:follow»},
+        «s:g»                   => \$opt->{«s:g»},
+        «s:G»                   => removed_option(«s:'-G'»),
+        «s:'group!'»            => «k:sub» { «:cperl-nonoverridable-face:shift»; $opt->{«s:heading»} = $opt->{«s:break»} = «:cperl-nonoverridable-face:shift» },
+        «s:'heading!'»          => \$opt->{«s:heading»},
+        «s:'h|no-filename'»     => \$opt->{«s:h»},
+        «s:'H|with-filename'»   => \$opt->{«s:H»},
+        «s:'i|ignore-case'»     => \$opt->{«s:i»},
+        «s:'ignore-directory|ignore-dir=s'» => «k:sub» {
+                                    «k:my» ( «:cperl-nonoverridable-face:undef», $dir ) = «:cperl-array-face:@_»;
+
+                                    $dir = App::Ack::remove_dir_sep( $dir );
+                                    «k:if» ( $dir «n:!»~ «c:/»«f:^»«b:(?:»«s:is»«k:|»«s:match»«b:)»«s::»«c:/» ) {
+                                        $dir = «s:'is:'» . $dir;
+                                    }
+                                    «:cperl-nonoverridable-face:push» @{ $opt->{«s:idirs»} }, $dir;
+        },
+        «s:'ignore-file=s'»     => «k:sub» {
+                                    «k:my» ( «:cperl-nonoverridable-face:undef», $file ) = «:cperl-array-face:@_»;
+                                    «:cperl-nonoverridable-face:push» @{ $opt->{«s:ifiles»} }, $file;
+                               },
+        «s:'lines=s'»           => «k:sub» { «:cperl-nonoverridable-face:shift»; «k:my» «v:$val» = «:cperl-nonoverridable-face:shift»; «:cperl-nonoverridable-face:push» @{$opt->{«s:lines»}}, $val },
+        «s:'l|files-with-matches'»
+                            => \$opt->{«s:l»},
+        «s:'L|files-without-matches'»
+                            => \$opt->{«s:L»},
+        «s:'m|max-count=i'»     => \$opt->{«s:m»},
+        «s:'match=s'»           => \$opt->{«s:regex»},
+        «s:'n|no-recurse'»      => \$opt->{«s:n»},
+        «s:o»                   => «k:sub» { $opt->{«s:output»} = «s:'$&'» },
+        «s:'output=s'»          => \$opt->{«s:output»},
+        «s:'pager:s'»           => «k:sub» {
+            «k:my» ( «:cperl-nonoverridable-face:undef», $value ) = «:cperl-array-face:@_»;
+
+            $opt->{«s:pager»} = $value || «:cperl-hash-face:$ENV»{«s:PAGER»};
+        },
+        «s:'noignore-directory|noignore-dir=s'»
+                            => «k:sub» {
+                                «k:my» ( «:cperl-nonoverridable-face:undef», $dir ) = «:cperl-array-face:@_»;
+
+                                «m:# »«x:XXX can you do --noignore-dir=match,...?
+»                                $dir = App::Ack::remove_dir_sep( $dir );
+                                «k:if» ( $dir «n:!»~ «c:/»«f:^»«b:(?:»«s:is»«k:|»«s:match»«b:)»«s::»«c:/» ) {
+                                    $dir = «s:'is:'» . $dir;
+                                }
+                                «k:if» ( $dir «n:!»~ «c:/»«f:^»«b:(?:»«s:is»«k:|»«s:match»«b:)»«s::»«c:/» ) {
+                                    Carp::croak(«s:"invalid noignore-directory argument: '$dir'"»);
+                                }
+
+                                @{ $opt->{«s:idirs»} } = «:cperl-nonoverridable-face:grep» {
+                                    $_ «t:ne» $dir
+                                } @{ $opt->{«s:idirs»} };
+
+                                «:cperl-nonoverridable-face:push» @{ $opt->{«s:no_ignore_dirs»} }, $dir;
+                            },
+        «s:'nopager'»           => «k:sub» { $opt->{«s:pager»} = «:cperl-nonoverridable-face:undef» },
+        «s:'passthru'»          => \$opt->{«s:passthru»},
+        «s:'print0'»            => \$opt->{«s:print0»},
+        «s:'Q|literal'»         => \$opt->{«s:Q»},
+        «s:'r|R|recurse'»       => «k:sub» { $opt->{«s:n»} = 0 },
+        «s:'s'»                 => \$opt->{«s:dont_report_bad_filenames»},
+        «s:'show-types'»        => \$opt->{«s:show_types»},
+        «s:'smart-case!'»       => \$opt->{«s:smart_case»},
+        «s:'sort-files'»        => \$opt->{«s:sort_files»},
+        «s:'type=s'»            => «k:sub» {
+            «k:my» ( «v:$getopt», «v:$value» ) = «:cperl-array-face:@_»;
+
+            «k:my» «v:$cb_value» = 1;
+            «k:if» ( $value =~ «:cperl-nonoverridable-face:s»«c:/»«f:^»«s:no»«c:/»/ ) {
+                $cb_value = 0;
+            }
+
+            «k:my» «v:$callback» = $extra_specs->{ $value . «s:'!'» };
+
+            «k:if» ( $callback ) {
+                $callback->( $getopt, $cb_value );
+            }
+            «k:else» {
+                Carp::croak( «s:"Unknown type '$value'"» );
+            }
+        },
+        «s:'u'»                 => removed_option(«s:'-u'»),
+        «s:'unrestricted'»      => removed_option(«s:'--unrestricted'»),
+        «s:'v|invert-match'»    => \$opt->{«s:v»},
+        «s:'w|word-regexp'»     => \$opt->{«s:w»},
+        «s:'x'»                 => «k:sub» { $opt->{«s:files_from»} = «s:'-'» },
+
+        «s:'version'»           => «k:sub» { App::Ack::print_version_statement(); «k:exit»; },
+        «s:'help|?:s'»          => «k:sub» { «:cperl-nonoverridable-face:shift»; App::Ack::show_help(«:cperl-array-face:@_»); «k:exit»; },
+        «s:'help-types'»        => «k:sub» { App::Ack::show_help_types(); «k:exit»; },
+        «s:'man'»               => «k:sub» { App::Ack::show_man(); «k:exit»; },
+        $extra_specs ? %{$extra_specs} : (),
+    }; «m:# »«x:arg_specs
+»}
+
+
+«k:sub» «f:process_other» {
+    «k:my» ( «v:$opt», «v:$extra_specs», «v:$arg_sources» ) = «:cperl-array-face:@_»;
+
+    «m:# »«x:Start with default options, minus some annoying ones.
+»    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»);
+    Getopt::Long::Configure(
+        «s:'bundling'»,
+        «s:'no_ignore_case'»,
+    );
+
+    «k:my» «v:$argv_source»;
+    «k:my» «v:$is_help_types_active»;
+
+    «k:foreach» «k:my» «v:$source» (@{$arg_sources}) {
+        «k:my» ( «v:$source_name», «v:$args» ) = @{$source}{«:cperl-nonoverridable-face:qw»«s:/name contents/»};
+
+        «k:if» ( $source_name «t:eq» «s:'ARGV'» ) {
+            $argv_source = $args;
+            «k:last»;
+        }
+    }
+
+    «k:if» ( $argv_source ) { «m:# »«x:This *should* always be true, but you never know...
+»        «k:my» «:cperl-array-face:@copy» = @{$argv_source};
+        «k:local» «:cperl-array-face:@ARGV» = «:cperl-array-face:@copy»;
+
+        Getopt::Long::Configure(«s:'pass_through'»);
+
+        Getopt::Long::GetOptions(
+            «s:'help-types'» => \$is_help_types_active,
+        );
+
+        Getopt::Long::Configure(«s:'no_pass_through'»);
+    }
+
+    «k:my» «v:$arg_specs» = get_arg_spec($opt, $extra_specs);
+
+    «k:foreach» «k:my» «v:$source» (@{$arg_sources}) {
+        «k:my» ( «v:$source_name», «v:$args» ) = @{$source}{«:cperl-nonoverridable-face:qw»«s:/name contents/»};
+
+        «k:my» «v:$args_for_source» = $arg_specs;
+
+        «k:if» ( $source->{«s:project»} ) {
+            «k:my» «v:$illegal» = «k:sub» {
+                «k:die» «s:"Options --output, --pager and --match are forbidden in project .ackrc files.\n"»;
+            };
+
+            $args_for_source = { «:cperl-hash-face:%»«v:$args_for_source»,
+                «s:'output=s'» => $illegal,
+                «s:'pager:s'»  => $illegal,
+                «s:'match=s'»  => $illegal,
+            };
+        }
+
+        «k:my» «v:$ret»;
+        «k:if» ( «t:ref»($args) ) {
+            «k:local» «:cperl-array-face:@ARGV» = @{$args};
+            $ret = Getopt::Long::GetOptions( %{$args_for_source} );
+            @{$args} = «:cperl-array-face:@ARGV»;
+        }
+        «k:else» {
+            ( $ret, $source->{«s:contents»} ) =
+                Getopt::Long::GetOptionsFromString( $args, %{$args_for_source} );
+        }
+        «k:if» ( «n:!»$ret ) {
+            «k:if» ( «n:!»$is_help_types_active ) {
+                «k:my» «v:$where» = $source_name «t:eq» «s:'ARGV'» ? «s:'on command line'» : «s:"in $source_name"»;
+                App::Ack::«k:die»( «s:"Invalid option $where"» );
+            }
+        }
+        «k:if» ( $opt->{«s:noenv_seen»} ) {
+            App::Ack::«k:die»( «s:"--noenv found in $source_name"» );
+        }
+    }
+
+    «m:# »«x:XXX We need to check on a -- in the middle of a non-ARGV source
+»
+    «k:return»;
+}
+
+
+«k:sub» «f:should_dump_options» {
+    «k:my» ( «v:$sources» ) = «:cperl-array-face:@_»;
+
+    «k:foreach» «k:my» «v:$source» (@{$sources}) {
+        «k:my» ( «v:$name», «v:$options» ) = @{$source}{«:cperl-nonoverridable-face:qw»«s:/name contents/»};
+
+        «k:if»($name «t:eq» «s:'ARGV'») {
+            «k:my» «v:$dump»;
+            «k:local» «:cperl-array-face:@ARGV» = @{$options};
+            Getopt::Long::Configure(«s:'default'», «s:'pass_through'», «s:'no_auto_help'», «s:'no_auto_version'»);
+            Getopt::Long::GetOptions(
+                «s:'dump'» => \$dump,
+            );
+            @{$options} = «:cperl-array-face:@ARGV»;
+            «k:return» $dump;
+        }
+    }
+    «k:return»;
+}
+
+
+«k:sub» «f:explode_sources» {
+    «k:my» ( «v:$sources» ) = «:cperl-array-face:@_»;
+
+    «k:my» «:cperl-array-face:@new_sources»;
+
+    Getopt::Long::Configure(«s:'default'», «s:'pass_through'», «s:'no_auto_help'», «s:'no_auto_version'»);
+
+    «k:my» «:cperl-hash-face:%opt»;
+    «k:my» «v:$arg_spec» = get_arg_spec(\«:cperl-hash-face:%opt»);
+
+    «k:my» «v:$add_type» = «k:sub» {
+        «k:my» ( «:cperl-nonoverridable-face:undef», $arg ) = «:cperl-array-face:@_»;
+
+        «m:# »«x:XXX refactor?
+»        «k:if» ( $arg =~ «c:/»«k:(»«b:\»«t:w»«b:+»«k:)»«s:=»«c:/») {
+            $arg_spec->{$1} = «k:sub» {};
+        }
+        «k:else» {
+            ( $arg ) = «:cperl-nonoverridable-face:split» «c:/»«s::»«c:/», $arg;
+            $arg_spec->{$arg} = «k:sub» {};
+        }
+    };
+
+    «k:my» «v:$del_type» = «k:sub» {
+        «k:my» ( «:cperl-nonoverridable-face:undef», $arg ) = «:cperl-array-face:@_»;
+
+        «:cperl-nonoverridable-face:delete» $arg_spec->{$arg};
+    };
+
+    «k:foreach» «k:my» «v:$source» (@{$sources}) {
+        «k:my» ( «v:$name», «v:$options» ) = @{$source}{«:cperl-nonoverridable-face:qw»«s:/name contents/»};
+        «k:if» ( «t:ref»($options) «t:ne» «s:'ARRAY'» ) {
+            $source->{«s:contents»} = $options =
+                [ Text::ParseWords::shellwords($options) ];
+        }
+
+        «k:for» «k:my» «v:$j» ( 0 .. @{$options}-1 ) {
+            «k:next» «k:unless» $options->[$j] =~ «c:/»«f:^»«s:-»«c:/»;
+            «k:my» «:cperl-array-face:@chunk» = ( $options->[$j] );
+            «:cperl-nonoverridable-face:push» «:cperl-array-face:@chunk», $options->[$j] «k:while» ++$j < @{$options} && $options->[$j] «n:!»~ «c:/»«f:^»«s:-»«c:/»;
+            $j--;
+
+            «k:my» «:cperl-array-face:@copy» = «:cperl-array-face:@chunk»;
+            «k:local» «:cperl-array-face:@ARGV» = «:cperl-array-face:@chunk»;
+            Getopt::Long::GetOptions(
+                «s:'type-add=s'» => $add_type,
+                «s:'type-set=s'» => $add_type,
+                «s:'type-del=s'» => $del_type,
+            );
+            Getopt::Long::GetOptions( %{$arg_spec} );
+
+            «:cperl-nonoverridable-face:push» «:cperl-array-face:@new_sources», {
+                «s:name»     => $name,
+                «s:contents» => \«:cperl-array-face:@copy»,
+            };
+        }
+    }
+
+    «k:return» \«:cperl-array-face:@new_sources»;
+}
+
+
+«k:sub» «f:compare_opts» {
+    «k:my» ( «v:$a», «v:$b» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$first_a» = $a->[0];
+    «k:my» «v:$first_b» = $b->[0];
+
+    $first_a =~ «:cperl-nonoverridable-face:s»«c:/»«f:^»«s:--»«b:?»«c:/»/;
+    $first_b =~ «:cperl-nonoverridable-face:s»«c:/»«f:^»«s:--»«b:?»«c:/»/;
+
+    «k:return» $first_a «t:cmp» $first_b;
+}
+
+
+«k:sub» «f:dump_options» {
+    «k:my» ( «v:$sources» ) = «:cperl-array-face:@_»;
+
+    $sources = explode_sources($sources);
+
+    «k:my» «:cperl-hash-face:%opts_by_source»;
+    «k:my» «:cperl-array-face:@source_names»;
+
+    «k:foreach» «k:my» «v:$source» (@{$sources}) {
+        «k:my» ( «v:$name», «v:$contents» ) = @{$source}{«:cperl-nonoverridable-face:qw»«s:/name contents/»};
+        «k:if» ( «t:not» «:cperl-hash-face:$opts_by_source»{$name} ) {
+            «:cperl-hash-face:$opts_by_source»{$name} = [];
+            «:cperl-nonoverridable-face:push» «:cperl-array-face:@source_names», $name;
+        }
+        «:cperl-nonoverridable-face:push» @{«:cperl-hash-face:$opts_by_source»{$name}}, $contents;
+    }
+
+    «k:foreach» «k:my» «v:$name» («:cperl-array-face:@source_names») {
+        «k:my» «v:$contents» = «:cperl-hash-face:$opts_by_source»{$name};
+
+        «:cperl-nonoverridable-face:print» $name, «s:"\n"»;
+        «:cperl-nonoverridable-face:print» «s:'='» «t:x» «t:length»($name), «s:"\n"»;
+        «:cperl-nonoverridable-face:print» «s:'  '», «t:join»(«s:' '», @{$_}), «s:"\n"» «k:foreach» «:cperl-nonoverridable-face:sort» { compare_opts($a, $b) } @{$contents};
+    }
+
+    «k:return»;
+}
+
+
+«k:sub» «f:remove_default_options_if_needed» {
+    «k:my» ( «v:$sources» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$default_index»;
+
+    «k:foreach» «k:my» «v:$index» ( 0 .. $#{$sources} ) {
+        «k:if» ( $sources->[$index]{«s:'name'»} «t:eq» «s:'Defaults'» ) {
+            $default_index = $index;
+            «k:last»;
+        }
+    }
+
+    «k:return» $sources «k:unless» «:cperl-nonoverridable-face:defined» $default_index;
+
+    «k:my» «v:$should_remove» = 0;
+
+    «m:# »«x:Start with default options, minus some annoying ones.
+»    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»);
+    Getopt::Long::Configure(
+        «s:'no_ignore_case'»,
+        «s:'no_auto_abbrev'»,
+        «s:'pass_through'»,
+    );
+
+    «k:foreach» «k:my» «v:$index» ( $default_index + 1 .. $#{$sources} ) {
+        «k:my» ( «v:$name», «v:$args» ) = @{$sources->[$index]}{«:cperl-nonoverridable-face:qw»«s:/name contents/»};
+
+        «k:if» («t:ref»($args)) {
+            «k:local» «:cperl-array-face:@ARGV» = @{$args};
+            Getopt::Long::GetOptions(
+                «s:'ignore-ack-defaults'» => \$should_remove,
+            );
+            @{$args} = «:cperl-array-face:@ARGV»;
+        }
+        «k:else» {
+            ( «:cperl-nonoverridable-face:undef», $sources->[$index]{«s:contents»} ) = Getopt::Long::GetOptionsFromString($args,
+                «s:'ignore-ack-defaults'» => \$should_remove,
+            );
+        }
+    }
+
+    Getopt::Long::Configure(«s:'default'»);
+    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»);
+
+    «k:return» $sources «k:unless» $should_remove;
+
+    «k:my» «:cperl-array-face:@copy» = @{$sources};
+    «:cperl-nonoverridable-face:splice» «:cperl-array-face:@copy», $default_index, 1;
+    «k:return» \«:cperl-array-face:@copy»;
+}
+
+
+«k:sub» «f:check_for_mutually_exclusive_options» {
+    «k:my» ( «v:$arg_sources» ) = «:cperl-array-face:@_»;
+
+    «k:my» «:cperl-hash-face:%mutually_exclusive_with»;
+    «k:my» «:cperl-array-face:@copy» = @{$arg_sources};
+
+    «k:for»(«k:my» «v:$i» = 0; $i < «:cperl-array-face:@INVALID_COMBINATIONS»; $i += 2) {
+        «k:my» ( «v:$lhs», «v:$rhs» ) = «:cperl-array-face:@INVALID_COMBINATIONS»[ $i, $i + 1 ];
+
+        «k:foreach» «k:my» «v:$l_opt» ( @{$lhs} ) {
+            «k:foreach» «k:my» «v:$r_opt» ( @{$rhs} ) {
+                «:cperl-nonoverridable-face:push» @{ «:cperl-hash-face:$mutually_exclusive_with»{ $l_opt } }, $r_opt;
+                «:cperl-nonoverridable-face:push» @{ «:cperl-hash-face:$mutually_exclusive_with»{ $r_opt } }, $l_opt;
+            }
+        }
+    }
+
+    «k:while»( «:cperl-array-face:@copy» ) {
+        «k:my» «:cperl-hash-face:%set_opts»;
+
+        «k:my» «v:$source» = «:cperl-nonoverridable-face:shift» «:cperl-array-face:@copy»;
+        «k:my» ( «v:$source_name», «v:$args» ) = @{$source}{«:cperl-nonoverridable-face:qw»«s:/name contents/»};
+        $args = «t:ref»($args) ? [ @{$args} ] : [ Text::ParseWords::shellwords($args) ];
+
+        «k:foreach» «k:my» «v:$opt» ( @{$args} ) {
+            «k:next» «k:unless» $opt =~ «c:/»«f:^[»«s:-+»«f:]»«c:/»;
+            «k:last» «k:if» $opt «t:eq» «s:'--'»;
+
+            «k:if»( $opt =~ «c:/»«f:^»«k:(»«f:.»«b:*»«k:)»«s:=»«c:/» ) {
+                $opt = $1;
+            }
+            «k:elsif» ( $opt =~ «c:/»«f:^»«k:(»«s:-»«f:[«n:^»»«s:-»«f:]»«k:)»«f:.»«b:+»«c:/» ) {
+                $opt = $1;
+            }
+
+            «:cperl-hash-face:$set_opts»{ $opt } = 1;
+
+            «k:my» «v:$mutex_opts» = «:cperl-hash-face:$mutually_exclusive_with»{ $opt };
+
+            «k:next» «k:unless» $mutex_opts;
+
+            «k:foreach» «k:my» «v:$mutex_opt» ( @{$mutex_opts} ) {
+                «k:if»(«:cperl-hash-face:$set_opts»{ $mutex_opt }) {
+                    «k:die» «s:"Options '$mutex_opt' and '$opt' are mutually exclusive\n"»;
+                }
+            }
+        }
+    }
+}
+
+
+«k:sub» «f:process_args» {
+    «k:my» «v:$arg_sources» = \«:cperl-array-face:@_»;
+
+    «k:my» «:cperl-hash-face:%opt» = (
+        «s:pager» => «:cperl-hash-face:$ENV»{«s:ACK_PAGER_COLOR»} || «:cperl-hash-face:$ENV»{«s:ACK_PAGER»},
+    );
+
+    check_for_mutually_exclusive_options($arg_sources);
+
+    $arg_sources = remove_default_options_if_needed($arg_sources);
+
+    «k:if» ( should_dump_options($arg_sources) ) {
+        dump_options($arg_sources);
+        «k:exit»(0);
+    }
+
+    «k:my» «v:$type_specs» = process_filetypes(\«:cperl-hash-face:%opt», $arg_sources);
+    process_other(\«:cperl-hash-face:%opt», $type_specs, $arg_sources);
+    «k:while» ( @{$arg_sources} ) {
+        «k:my» «v:$source» = «:cperl-nonoverridable-face:shift» @{$arg_sources};
+        «k:my» ( «v:$source_name», «v:$args» ) = @{$source}{«:cperl-nonoverridable-face:qw»«s:/name contents/»};
+
+        «m:# »«x:All of our sources should be transformed into an array ref
+»        «k:if» ( «t:ref»($args) ) {
+            «k:if» ( $source_name «t:eq» «s:'ARGV'» ) {
+                «:cperl-array-face:@ARGV» = @{$args};
+            }
+            «k:elsif» (@{$args}) {
+                Carp::croak «s:"source '$source_name' has extra arguments!"»;
+            }
+        }
+        «k:else» {
+            Carp::croak «s:'The impossible has occurred!'»;
+        }
+    }
+    «k:my» «v:$filters» = («:cperl-hash-face:$opt»{«s:filters»} ||= []);
+
+    «m:# »«x:Throw the default filter in if no others are selected.
+»    «k:if» ( «t:not» «:cperl-nonoverridable-face:grep» { «n:!»$_->is_inverted() } @{$filters} ) {
+        «:cperl-nonoverridable-face:push» @{$filters}, App::Ack::Filter::Default->new();
+    }
+    «k:return» \«:cperl-hash-face:%opt»;
+}
+
+
+«k:sub» «f:retrieve_arg_sources» {
+    «k:my» «:cperl-array-face:@arg_sources»;
+
+    «k:my» «v:$noenv»;
+    «k:my» «v:$ackrc»;
+
+    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»);
+    Getopt::Long::Configure(«s:'pass_through'»);
+    Getopt::Long::Configure(«s:'no_auto_abbrev'»);
+
+    Getopt::Long::GetOptions(
+        «s:'noenv'»   => \$noenv,
+        «s:'ackrc=s'» => \$ackrc,
+    );
+
+    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»);
+
+    «k:my» «:cperl-array-face:@files»;
+
+    «k:if» ( «n:!»$noenv ) {
+        «k:my» «v:$finder» = App::Ack::ConfigFinder->new;
+        «:cperl-array-face:@files»  = $finder->find_config_files;
+    }
+    «k:if» ( $ackrc ) {
+        «m:# »«x:We explicitly use open so we get a nice error message.
+»        «m:# »«x:XXX This is a potential race condition!.
+»        «k:if»(«t:open» «k:my» «v:$fh», «s:'<'», $ackrc) {
+            «t:close» $fh;
+        }
+        «k:else» {
+            «k:die» «s:"Unable to load ackrc '$ackrc': $!"»
+        }
+        «:cperl-nonoverridable-face:push»( «:cperl-array-face:@files», { «s:path» => $ackrc } );
+    }
+
+    «:cperl-nonoverridable-face:push» «:cperl-array-face:@arg_sources», {
+        «s:name»     => «s:'Defaults'»,
+        «s:contents» => [ App::Ack::ConfigDefault::options_clean() ],
+    };
+
+    «k:foreach» «k:my» «v:$file» ( «:cperl-array-face:@files») {
+        «k:my» «:cperl-array-face:@lines» = App::Ack::ConfigFinder::read_rcfile($file->{«s:path»});
+
+        «k:if»(«:cperl-array-face:@lines») {
+            «:cperl-nonoverridable-face:push» «:cperl-array-face:@arg_sources», {
+                «s:name»     => $file->{«s:path»},
+                «s:contents» => \«:cperl-array-face:@lines»,
+                «s:project»  => $file->{«s:project»},
+            };
+        }
+    }
+
+    «k:if» ( «:cperl-hash-face:$ENV»{«s:ACK_OPTIONS»} && «n:!»$noenv ) {
+        «:cperl-nonoverridable-face:push» «:cperl-array-face:@arg_sources», {
+            «s:name»     => «s:'ACK_OPTIONS'»,
+            «s:contents» => «:cperl-hash-face:$ENV»{«s:ACK_OPTIONS»},
+        };
+    }
+
+    «:cperl-nonoverridable-face:push» «:cperl-array-face:@arg_sources», {
+        «s:name»     => «s:'ARGV'»,
+        «s:contents» => [ «:cperl-array-face:@ARGV» ],
+    };
+
+    «k:return» «:cperl-array-face:@arg_sources»;
+}
+
+1; «m:# »«x:End of App::Ack::ConfigLoader
+»«k:package» «f:App::Ack::Filter»;
+
+«k:use» «f:strict»;
+«k:use» «f:warnings»;
+«k:use» overload
+    «s:'""'» => «s:'to_string'»;
+
+«k:use» «f:Carp» 1.04 ();
+
+«k:my» «:cperl-hash-face:%filter_types»;
+
+
+«k:sub» «f:create_filter» {
+    «k:my» ( «:cperl-nonoverridable-face:undef», $type, «:cperl-array-face:@args» ) = «:cperl-array-face:@_»;
+
+    «k:if» ( «k:my» «v:$package» = «:cperl-hash-face:$filter_types»{$type} ) {
+        «k:return» $package->new(«:cperl-array-face:@args»);
+    }
+    Carp::croak «s:"Unknown filter type '$type'"»;
+}
+
+
+«k:sub» «f:register_filter» {
+    «k:my» ( «:cperl-nonoverridable-face:undef», $type, $package ) = «:cperl-array-face:@_»;
+
+    «:cperl-hash-face:$filter_types»{$type} = $package;
+
+    «k:return»;
+}
+
+
+«k:sub» «f:invert» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:return» App::Ack::Filter::Inverse->new( $self );
+}
+
+
+«k:sub» «f:is_inverted» {
+    «k:return» 0;
+}
+
+
+«k:sub» «f:to_string» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:return» «s:'(unimplemented to_string)'»;
+}
+
+
+«k:sub» «f:inspect» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:return» «t:ref»($self);
+}
+
+1;
+«k:package» «f:App::Ack::Filter::Extension»;
+
+«k:use» «f:strict»;
+«k:use» «f:warnings»;
+«k:BEGIN» {
+    «k:our» «:cperl-array-face:@ISA» = «s:'App::Ack::Filter'»;
+}
+
+
+«k:sub» «f:new» {
+    «k:my» ( «v:$class», «:cperl-array-face:@extensions» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$exts» = «t:join»(«s:'|'», «:cperl-nonoverridable-face:map» { «s:"\Q$_\E"»} «:cperl-array-face:@extensions»);
+    «k:my» «v:$re»   = «:cperl-nonoverridable-face:qr»«c:/»«f:[»«s:.»«f:]»«b:(?:»«v:$exts»«b:)»«f:$»«c:/»«:cperl-nonoverridable-face:i»;
+
+    «k:return» «t:bless» {
+        «s:extensions» => \«:cperl-array-face:@extensions»,
+        «s:regex»      => $re,
+        «s:groupname»  => «s:'ExtensionGroup'»,
+    }, $class;
+}
+
+«k:sub» «f:create_group» {
+    «k:return» App::Ack::Filter::ExtensionGroup->new();
+}
+
+«k:sub» «f:filter» {
+    «k:my» ( «v:$self», «v:$resource» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$re» = $self->{«s:'regex'»};
+
+    «k:return» $resource->name =~ «c:/»«v:$re»«c:/»;
+}
+
+«k:sub» «f:inspect» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$re» = $self->{«s:'regex'»};
+
+    «k:return» «t:ref»($self) . «s:" - $re"»;
+}
+
+«k:sub» «f:to_string» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$exts» = $self->{«s:'extensions'»};
+
+    «k:return» «t:join»(«s:' '», «:cperl-nonoverridable-face:map» { «s:".$_"» } @{$exts});
+}
+
+«k:BEGIN» {
+    App::Ack::Filter->register_filter(«s:ext» => «t:__PACKAGE__»);
+}
+
+1;
+«k:package» «f:App::Ack::Filter::FirstLineMatch»;
+
+«k:use» «f:strict»;
+«k:use» «f:warnings»;
+«k:BEGIN» {
+    «k:our» «:cperl-array-face:@ISA» = «s:'App::Ack::Filter'»;
+}
+
+«k:sub» «f:new» {
+    «k:my» ( «v:$class», «v:$re» ) = «:cperl-array-face:@_»;
+
+    $re =~ «:cperl-nonoverridable-face:s»«c:{»«f:^»«s:/»«k:|»«s:/»«f:$»«c:}{}»«:cperl-nonoverridable-face:g»; «m:# »«x:XXX validate?
+»    $re = «:cperl-nonoverridable-face:qr»«c:{»«v:$re»«c:}»«:cperl-nonoverridable-face:i»;
+
+    «k:return» «t:bless» {
+        «s:regex» => $re,
+    }, $class;
+}
+
+«m:# »«x:This test reads the first 250 characters of a file, then just uses the
+»«m:# »«x:first line found in that. This prevents reading something  like an entire
+»«m:# »«x:.min.js file (which might be only one "line" long) into memory.
+»
+«k:sub» «f:filter» {
+    «k:my» ( «v:$self», «v:$resource» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$re» = $self->{«s:'regex'»};
+
+    «k:my» «v:$line» = $resource->firstliney;
+
+    «k:return» $line =~ «c:/»«v:$re»«c:/»;
+}
+
+«k:sub» «f:inspect» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$re» = $self->{«s:'regex'»};
+
+    «k:return» «t:ref»($self) . «s:" - $re"»;
+}
+
+«k:sub» «f:to_string» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    («k:my» «v:$re» = $self->{«s:regex»}) =~ «:cperl-nonoverridable-face:s»«c:{»«b:\»«s:(»«f:[«n:^»»«s::»«f:]»«b:*»«s::»«k:(»«f:.»«b:*»«k:)»«b:\»«s:)»«f:$»«c:}{»«s:$1»«c:}»;
+
+    «k:return» «s:"first line matches /$re/"»;
+}
+
+«k:BEGIN» {
+    App::Ack::Filter->register_filter(«s:firstlinematch» => «t:__PACKAGE__»);
+}
+
+1;
+«k:package» «f:App::Ack::Filter::Is»;
+
+«k:use» «f:strict»;
+«k:use» «f:warnings»;
+«k:BEGIN» {
+    «k:our» «:cperl-array-face:@ISA» = «s:'App::Ack::Filter'»;
+}
+
+«k:use» «f:File::Spec» 3.00 ();
+
+«k:sub» «f:new» {
+    «k:my» ( «v:$class», «v:$filename» ) = «:cperl-array-face:@_»;
+
+    «k:return» «t:bless» {
+        «s:filename» => $filename,
+        «s:groupname» => «s:'IsGroup'»,
+    }, $class;
+}
+
+«k:sub» «f:create_group» {
+    «k:return» App::Ack::Filter::IsGroup->new();
+}
+
+«k:sub» «f:filter» {
+    «k:my» ( «v:$self», «v:$resource» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$filename» = $self->{«s:'filename'»};
+    «k:my» «v:$base»     = (File::Spec->splitpath($resource->name))[2];
+
+    «k:return» $base «t:eq» $filename;
+}
+
+«k:sub» «f:inspect» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$filename» = $self->{«s:'filename'»};
+
+    «k:return» «t:ref»($self) . «s:" - $filename"»;
+}
+
+«k:sub» «f:to_string» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$filename» = $self->{«s:'filename'»};
+
+    «k:return» $filename;
+}
+
+«k:BEGIN» {
+    App::Ack::Filter->register_filter(«s:is» => «t:__PACKAGE__»);
+}
+
+1;
+«k:package» «f:App::Ack::Filter::Match»;
+
+«k:use» «f:strict»;
+«k:use» «f:warnings»;
+«k:BEGIN» {
+    «k:our» «:cperl-array-face:@ISA» = «s:'App::Ack::Filter'»;
+}
+
+«k:use» «f:File::Spec» 3.00;
+
+«k:sub» «f:new» {
+    «k:my» ( «v:$class», «v:$re» ) = «:cperl-array-face:@_»;
+
+    $re =~ «:cperl-nonoverridable-face:s»«c:{»«f:^»«s:/»«k:|»«s:/»«f:$»«c:}{}»«:cperl-nonoverridable-face:g»; «m:# »«x:XXX validate?
+»    $re = «:cperl-nonoverridable-face:qr»«c:/»«v:$re»«c:/»«:cperl-nonoverridable-face:i»;
+
+    «k:return» «t:bless» {
+        «s:regex» => $re,
+    }, $class;
+}
+
+«k:sub» «f:filter» {
+    «k:my» ( «v:$self», «v:$resource» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$re»   = $self->{«s:'regex'»};
+    «k:my» «v:$base» = (File::Spec->splitpath($resource->name))[2];
+
+    «k:return» $base =~ «c:/»«v:$re»«c:/»;
+}
+
+«k:sub» «f:inspect» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$re» = $self->{«s:'regex'»};
+
+    «:cperl-nonoverridable-face:print» «t:ref»($self) . «s:" - $re"»;
+
+    «k:return»;
+}
+
+«k:sub» «f:to_string» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$re» = $self->{«s:'regex'»};
+
+    «k:return» «s:"filename matches $re"»;
+}
+
+«k:BEGIN» {
+    App::Ack::Filter->register_filter(«s:match» => «t:__PACKAGE__»);
+}
+
+1;
+«k:package» «f:App::Ack::Filter::Default»;
+
+«k:use» «f:strict»;
+«k:use» «f:warnings»;
+«k:BEGIN» {
+    «k:our» «:cperl-array-face:@ISA» = «s:'App::Ack::Filter'»;
+}
+
+«k:sub» «f:new» {
+    «k:my» ( «v:$class» ) = «:cperl-array-face:@_»;
+
+    «k:return» «t:bless» {}, $class;
+}
+
+«k:sub» «f:filter» {
+    «k:my» ( «v:$self», «v:$resource» ) = «:cperl-array-face:@_»;
+
+    «k:return» «f:-T» $resource->name;
+}
+
+1;
+«k:package» «f:App::Ack::Filter::Inverse»;
+
+«k:use» «f:strict»;
+«k:use» «f:warnings»;
+«k:BEGIN» {
+    «k:our» «:cperl-array-face:@ISA» = «s:'App::Ack::Filter'»;
+}
+
+«k:sub» «f:new» {
+    «k:my» ( «v:$class», «v:$filter» ) = «:cperl-array-face:@_»;
+
+    «k:return» «t:bless» {
+        «s:filter» => $filter,
+    }, $class;
+}
+
+«k:sub» «f:filter» {
+    «k:my» ( «v:$self», «v:$resource» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$filter» = $self->{«s:'filter'»};
+    «k:return» «n:!»$filter->filter( $resource );
+}
+
+«k:sub» «f:invert» {
+    «k:my» «v:$self» = «:cperl-nonoverridable-face:shift»;
+
+    «k:return» $self->{«s:'filter'»};
+}
+
+«k:sub» «f:is_inverted» {
+    «k:return» 1;
+}
+
+«k:sub» «f:inspect» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$filter» = $self->{«s:'filter'»};
+
+    «k:return» «s:"!$filter"»;
+}
+
+1;
+«k:package» «f:App::Ack::Filter::Collection»;
+
+«k:use» «f:strict»;
+«k:use» «f:warnings»;
+«k:BEGIN» {
+    «k:our» «:cperl-array-face:@ISA» = «s:'App::Ack::Filter'»;
+}
+
+«k:sub» «f:new» {
+    «k:my» ( «v:$class» ) = «:cperl-array-face:@_»;
+
+    «k:return» «t:bless» {
+        «s:groups» => {},
+        «s:ungrouped» => [],
+    }, $class;
+}
+
+«k:sub» «f:filter» {
+    «k:my» ( «v:$self», «v:$resource» ) = «:cperl-array-face:@_»;
+
+    «k:for» «k:my» «v:$group» («t:values» %{$self->{«s:'groups'»}}) {
+        «k:if» ($group->filter($resource)) {
+            «k:return» 1;
+        }
+    }
+
+    «k:for» «k:my» «v:$filter» (@{$self->{«s:'ungrouped'»}}) {
+        «k:if» ($filter->filter($resource)) {
+            «k:return» 1;
+        }
+    }
+
+    «k:return» 0;
+}
+
+«k:sub» «f:add» {
+    «k:my» ( «v:$self», «v:$filter» ) = «:cperl-array-face:@_»;
+
+    «k:if» («:cperl-nonoverridable-face:exists» $filter->{«s:'groupname'»}) {
+        «k:my» «v:$group» = ($self->{«s:groups»}->{$filter->{«s:groupname»}} ||= $filter->create_group());
+        $group->add($filter);
+    }
+    «k:else» {
+        «:cperl-nonoverridable-face:push» @{$self->{«s:'ungrouped'»}}, $filter;
+    }
+
+    «k:return»;
+}
+
+«k:sub» «f:inspect» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:return» «t:ref»($self) . «s:" - $self"»;
+}
+
+«k:sub» «f:to_string» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$ungrouped» = $self->{«s:'ungrouped'»};
+
+    «k:return» «t:join»(«s:', '», «:cperl-nonoverridable-face:map» { «s:"($_)"» } @{$ungrouped});
+}
+
+1;
+«k:package» «f:App::Ack::Filter::IsGroup»;
+
+«k:use» «f:strict»;
+«k:use» «f:warnings»;
+«k:BEGIN» {
+    «k:our» «:cperl-array-face:@ISA» = «s:'App::Ack::Filter'»;
+}
+
+«k:use» «f:File::Spec» 3.00 ();
+
+«k:sub» «f:new» {
+    «k:my» ( «v:$class» ) = «:cperl-array-face:@_»;
+
+    «k:return» «t:bless» {
+        «s:data» => {},
+    }, $class;
+}
+
+«k:sub» «f:add» {
+    «k:my» ( «v:$self», «v:$filter» ) = «:cperl-array-face:@_»;
+
+    $self->{«s:data»}->{ $filter->{«s:filename»} } = 1;
+
+    «k:return»;
+}
+
+«k:sub» «f:filter» {
+    «k:my» ( «v:$self», «v:$resource» ) = «:cperl-array-face:@_»;
+
+    «k:my» «v:$data» = $self->{«s:'data'»};
+    «k:my» «v:$base» = (File::Spec->splitpath($resource->name))[2];
+
+    «k:return» «:cperl-nonoverridable-face:exists» $data->{$base};
+}
+
+«k:sub» «f:inspect» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:return» «t:ref»($self) . «s:" - $self"»;
+}
+
+«k:sub» «f:to_string» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:return» «t:join»(«s:' '», «:cperl-nonoverridable-face:keys» %{$self->{«s:data»}});
+}
+
+1;
+«k:package» «f:App::Ack::Filter::ExtensionGroup»;
+
+«k:use» «f:strict»;
+«k:use» «f:warnings»;
+«k:BEGIN» {
+    «k:our» «:cperl-array-face:@ISA» = «s:'App::Ack::Filter'»;
+}
+
+«k:sub» «f:new» {
+    «k:my» ( «v:$class» ) = «:cperl-array-face:@_»;
+
+    «k:return» «t:bless» {
+        «s:data» => {},
+    }, $class;
+}
+
+«k:sub» «f:add» {
+    «k:my» ( «v:$self», «v:$filter» ) = «:cperl-array-face:@_»;
+
+    «k:foreach» «k:my» «v:$ext» (@{$filter->{«s:extensions»}}) {
+        $self->{«s:data»}->{«t:lc» $ext} = 1;
+    }
+
+    «k:return»;
+}
+
+«k:sub» «f:filter» {
+    «k:my» ( «v:$self», «v:$resource» ) = «:cperl-array-face:@_»;
+
+    «k:if» ($resource->name =~ «c:/»«f:[»«s:.»«f:]»«k:(»«f:[«n:^»»«s:.»«f:]»«b:*»«k:)»«f:$»«c:/») {
+        «k:return» «:cperl-nonoverridable-face:exists» $self->{«s:'data'»}->{«t:lc» $1};
+    }
+
+    «k:return» 0;
+}
+
+«k:sub» «f:inspect» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:return» «t:ref»($self) . «s:" - $self"»;
+}
+
+«k:sub» «f:to_string» {
+    «k:my» ( «v:$self» ) = «:cperl-array-face:@_»;
+
+    «k:return» «t:join»(«s:' '», «:cperl-nonoverridable-face:map» { «s:".$_"» } «:cperl-nonoverridable-face:sort» «:cperl-nonoverridable-face:keys» %{$self->{«s:data»}});
+}
+
+1;
+«k:package» «f:File::Next»;
+
+«k:use» «f:strict»;
+«k:use» «f:warnings»;
+
+
+«k:our» «v:$VERSION» = «s:'1.12'»;
+
+
+
+«k:use» «f:File::Spec» ();
+
+«k:our» «v:$name»; «m:# »«x:name of the current file
+»«k:our» «v:$dir»;  «m:# »«x:dir of the current file
+»
+«k:our» «:cperl-hash-face:%files_defaults»;
+«k:our» «:cperl-hash-face:%skip_dirs»;
+
+«k:BEGIN» {
+    «:cperl-hash-face:%files_defaults» = (
+        «s:file_filter»     => «:cperl-nonoverridable-face:undef»,
+        «s:descend_filter»  => «:cperl-nonoverridable-face:undef»,
+        «s:error_handler»   => «k:sub» { «t:CORE»::«k:die» «:cperl-array-face:@_» },
+        «s:warning_handler» => «k:sub» { «t:CORE»::«t:warn» «:cperl-array-face:@_» },
+        «s:sort_files»      => «:cperl-nonoverridable-face:undef»,
+        «s:follow_symlinks» => 1,
+        «s:nul_separated»   => 0,
+    );
+    «:cperl-hash-face:%skip_dirs» = «:cperl-nonoverridable-face:map» {($_,1)} (File::Spec->curdir, File::Spec->updir);
+}
+
+
+«k:sub» «f:files» {
+    «k:die» _bad_invocation() «k:if» «:cperl-array-face:@_» && «:cperl-nonoverridable-face:defined»(«:cperl-array-face:$_»[0]) && («:cperl-array-face:$_»[0] «t:eq» «t:__PACKAGE__»);
+
+    «k:my» («v:$parms»,«:cperl-array-face:@queue») = _setup( \«:cperl-hash-face:%files_defaults», «:cperl-array-face:@_» );
+    «k:my» «v:$filter» = $parms->{«s:file_filter»};
+
+    «k:return» «k:sub» {
+        «k:while» («:cperl-array-face:@queue») {
+            «k:my» («v:$dirname»,«v:$file»,«v:$fullpath») = «:cperl-nonoverridable-face:splice»( «:cperl-array-face:@queue», 0, 3 );
+            «k:if» ( «f:-f» $fullpath || «f:-p» $fullpath || $fullpath =~ «:cperl-nonoverridable-face:m»«c:{»«f:^»«s:/dev/fd»«c:}» ) {
+                «k:if» ( $filter ) {
+                    «k:local» «v:$_» = $file;
+                    «k:local» «v:$File::Next::dir» = $dirname;
+                    «k:local» «v:$File::Next::name» = $fullpath;
+                    «k:next» «k:if» «t:not» $filter->();
+                }
+                «k:return» «t:wantarray» ? ($dirname,$file,$fullpath) : $fullpath;
+            }
+            «k:elsif» ( «f:-d _» ) {
+                «:cperl-nonoverridable-face:unshift»( «:cperl-array-face:@queue», _candidate_files( $parms, $fullpath ) );
+            }
+        } «m:# »«x:while
+»
+        «k:return»;
+    }; «m:# »«x:iterator
+»}
+
+
+
+
+
+
+«k:sub» «f:from_file» {
+    «k:die» _bad_invocation() «k:if» «:cperl-array-face:@_» && «:cperl-nonoverridable-face:defined»(«:cperl-array-face:$_»[0]) && («:cperl-array-face:$_»[0] «t:eq» «t:__PACKAGE__»);
+
+    «k:my» («v:$parms»,«:cperl-array-face:@queue») = _setup( \«:cperl-hash-face:%files_defaults», «:cperl-array-face:@_» );
+    «k:my» «v:$err»  = $parms->{«s:error_handler»};
+    «k:my» «v:$warn» = $parms->{«s:error_handler»};
+
+    «k:my» «v:$filename» = «:cperl-array-face:$queue»[1];
+
+    «k:if» ( «n:!»«:cperl-nonoverridable-face:defined»($filename) ) {
+        $err->( «s:'Must pass a filename to from_file()'» );
+        «k:return» «:cperl-nonoverridable-face:undef»;
+    }
+
+    «k:my» «v:$fh»;
+    «k:if» ( $filename «t:eq» «s:'-'» ) {
+        $fh = \*STDIN;
+    }
+    «k:else» {
+        «k:if» ( «n:!»«t:open»( $fh, «s:'<'», $filename ) ) {
+            $err->( «s:"Unable to open $filename: $!"» );
+            «k:return» «:cperl-nonoverridable-face:undef»;
+        }
+    }
+    «k:my» «v:$filter» = $parms->{«s:file_filter»};
+
+    «k:return» «k:sub» {
+        «k:local» «v:$/» = $parms->{«s:nul_separated»} ? «s:"\x00"» : $/;
+        «k:while» ( «k:my» «v:$fullpath» = <$fh> ) {
+            «:cperl-nonoverridable-face:chomp» $fullpath;
+            «k:next» «k:unless» $fullpath =~ «c:/»«f:.»«c:/»;
+            «k:if» ( «t:not» ( «f:-f» $fullpath || «f:-p _» ) ) {
+                $warn->( «s:"$fullpath: No such file"» );
+                «k:next»;
+            }
+
+            «k:my» («v:$volume»,«v:$dirname»,«v:$file») = File::Spec->splitpath( $fullpath );
+            «k:if» ( $filter ) {
+                «k:local» «v:$_» = $file;
+                «k:local» «v:$File::Next::dir»  = $dirname;
+                «k:local» «v:$File::Next::name» = $fullpath;
+                «k:next» «k:if» «t:not» $filter->();
+            }
+            «k:return» «t:wantarray» ? ($dirname,$file,$fullpath) : $fullpath;
+        } «m:# »«x:while
+»        «t:close» $fh;
+
+        «k:return»;
+    }; «m:# »«x:iterator
+»}
+
+«k:sub» «f:_bad_invocation» {
+    «k:my» «v:$good» = («t:caller»(1))[3];
+    «k:my» «v:$bad»  = $good;
+    $bad =~ «:cperl-nonoverridable-face:s»«c:/»«k:(»«f:.»«b:+»«k:)»«s:::»«c:/»«s:$1->»«c:/»;
+    «k:return» «s:"$good must not be invoked as $bad"»;
+}
+
+«k:sub» «f:sort_standard»«s:($$)»   { «k:return» «:cperl-array-face:$_»[0]->[1] «t:cmp» «:cperl-array-face:$_»[1]->[1] }
+«k:sub» «f:sort_reverse»«s:($$)»    { «k:return» «:cperl-array-face:$_»[1]->[1] «t:cmp» «:cperl-array-face:$_»[0]->[1] }
+
+«k:sub» «f:reslash» {
+    «k:my» «v:$path» = «:cperl-nonoverridable-face:shift»;
+
+    «k:my» «:cperl-array-face:@parts» = «:cperl-nonoverridable-face:split»( «c:/»«b:\»«s:/»«c:/», $path );
+
+    «k:return» $path «k:if» «:cperl-array-face:@parts» < 2;
+
+    «k:return» File::Spec->catfile( «:cperl-array-face:@parts» );
+}
+
+
+
+«k:sub» «f:_setup» {
+    «k:my» «v:$defaults» = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$passed_parms» = «t:ref» «:cperl-array-face:$_»[0] «t:eq» «s:'HASH'» ? {%{+«:cperl-nonoverridable-face:shift»}} : {}; «m:# »«x:copy parm hash
+»
+    «k:my» «:cperl-hash-face:%passed_parms» = %{$passed_parms};
+
+    «k:my» «v:$parms» = {};
+    «k:for» «k:my» «v:$key» ( «:cperl-nonoverridable-face:keys» %{$defaults} ) {
+        $parms->{$key} =
+            «:cperl-nonoverridable-face:exists» «:cperl-hash-face:$passed_parms»{$key}
+                ? «:cperl-nonoverridable-face:delete» «:cperl-hash-face:$passed_parms»{$key}
+                : $defaults->{$key};
+    }
+
+    «m:# »«x:Any leftover keys are bogus
+»    «k:for» «k:my» «v:$badkey» ( «:cperl-nonoverridable-face:keys» «:cperl-hash-face:%passed_parms» ) {
+        «k:my» «v:$sub» = («t:caller»(1))[3];
+        $parms->{«s:error_handler»}->( «s:"Invalid option passed to $sub(): $badkey"» );
+    }
+
+    «m:# »«x:If it's not a code ref, assume standard sort
+»    «k:if» ( $parms->{«s:sort_files»} && ( «t:ref»($parms->{«s:sort_files»}) «t:ne» «s:'CODE'» ) ) {
+        $parms->{«s:sort_files»} = \&sort_standard;
+    }
+    «k:my» «:cperl-array-face:@queue»;
+
+    «k:for» ( «:cperl-array-face:@_» ) {
+        «k:my» «v:$start» = reslash( $_ );
+        «k:if» («f:-d» $start) {
+            «:cperl-nonoverridable-face:push» «:cperl-array-face:@queue», ($start,«:cperl-nonoverridable-face:undef»,$start);
+        }
+        «k:else» {
+            «:cperl-nonoverridable-face:push» «:cperl-array-face:@queue», («:cperl-nonoverridable-face:undef»,$start,$start);
+        }
+    }
+
+    «k:return» ($parms,«:cperl-array-face:@queue»);
+}
+
+
+«k:sub» «f:_candidate_files» {
+    «k:my» «v:$parms»   = «:cperl-nonoverridable-face:shift»;
+    «k:my» «v:$dirname» = «:cperl-nonoverridable-face:shift»;
+
+    «k:my» «v:$dh»;
+    «k:if» ( «n:!»«t:opendir» $dh, $dirname ) {
+        $parms->{«s:error_handler»}->( «s:"$dirname: $!"» );
+        «k:return»;
+    }
+
+    «k:my» «:cperl-array-face:@newfiles»;
+    «k:my» «v:$descend_filter» = $parms->{«s:descend_filter»};
+    «k:my» «v:$follow_symlinks» = $parms->{«s:follow_symlinks»};
+    «k:my» «v:$sort_sub» = $parms->{«s:sort_files»};
+
+    «k:for» «k:my» «v:$file» ( «:cperl-nonoverridable-face:grep» { «n:!»«:cperl-nonoverridable-face:exists» «:cperl-hash-face:$skip_dirs»{$_} } «t:readdir» $dh ) {
+        «k:my» «v:$has_stat»;
+
+        «m:# »«x:Only do directory checking if we have a descend_filter
+»        «k:my» «v:$fullpath» = File::Spec->catdir( $dirname, $file );
+        «k:if» ( «n:!»$follow_symlinks ) {
+            «k:next» «k:if» «f:-l» $fullpath;
+            $has_stat = 1;
+        }
+
+        «k:if» ( $descend_filter ) {
+            «k:if» ( $has_stat ? («f:-d _») : («f:-d» $fullpath) ) {
+                «k:local» «v:$File::Next::dir» = $fullpath;
+                «k:local» «v:$_» = $file;
+                «k:next» «k:if» «t:not» $descend_filter->();
+            }
+        }
+        «k:if» ( $sort_sub ) {
+            «:cperl-nonoverridable-face:push»( «:cperl-array-face:@newfiles», [ $dirname, $file, $fullpath ] );
+        }
+        «k:else» {
+            «:cperl-nonoverridable-face:push»( «:cperl-array-face:@newfiles», $dirname, $file, $fullpath );
+        }
+    }
+    «t:closedir» $dh;
+
+    «k:if» ( $sort_sub ) {
+        «k:return» «:cperl-nonoverridable-face:map» { @{$_} } «:cperl-nonoverridable-face:sort» $sort_sub «:cperl-array-face:@newfiles»;
+    }
+
+    «k:return» «:cperl-array-face:@newfiles»;
+}
+
+
+1; «m:# »«x:End of File::Next
+»

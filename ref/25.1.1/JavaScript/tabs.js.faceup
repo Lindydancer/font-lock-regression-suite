@@ -1,0 +1,231 @@
+«m:/***************************************************************»«x:
+ *  Copyright notice
+ *
+ *  (c) 2012 Alexander Kellner <alexander.kellner@in2code.de>, in2code
+ *
+ *  All rights reserved
+ *
+ *  This script is part of the TYPO3 project. The TYPO3 project is
+ *  free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  The GNU General Public License can be found at
+ *  http://www.gnu.org/copyleft/gpl.html.
+ *
+ *  This script is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  This copyright notice MUST APPEAR in all copies of the script!
+ ***************************************************************/»
+
+jQuery(document).ready(«k:function»(«v:$») {
+	$.fn.powermailTabs = «k:function»(«v:options») {
+		«s:'use strict'»;
+		«k:var» «v:$this» = jQuery(«c:this»);
+		options = jQuery.extend({
+			container: «s:'fieldset'»,
+			header: «s:'legend'»,
+			tabs: «c:true»,
+			navigation: «c:true»,
+			openTabOnError: «c:true»,
+			tabIndex: «c:true»
+		}, options);
+
+		«m:// »«x:initial show first fieldset
+»		hideAllFieldsets($this, options);
+		$this.find(options.container).first().show();
+
+		generateTabNavigation($this, options);
+		generateButtonNavigation($this, options);
+
+		«k:if» ($.fn.parsley && $(«s:'form[data-parsley-validate="data-parsley-validate"]'»).length && $(«s:'.powermail_morestep'»).length) {
+			$(«s:'form[data-parsley-validate="data-parsley-validate"]'»).parsley().subscribe(«s:'parsley:field:validated'», «k:function»() {
+				$(«s:'#powermail_tabmenu > li'»).removeClass(«s:'parsley-error'»);
+
+				«m:// »«x:if error occurs
+»				«k:if» (!$(«s:'form[data-parsley-validate="data-parsley-validate"]'»).parsley().isValid()) {
+
+					«m:// »«x:for each field with an error
+»					$(«s:'.parsley-error'»).each(«k:function»() {
+						«k:var» «v:errorIndex» = $(«s:'.powermail_fieldset'»).index($(«c:this»).closest(«s:'.powermail_fieldset'»));
+						«k:var» «v:tabWithError» = $(«s:'#powermail_tabmenu > li'»).slice(errorIndex, errorIndex + 1);
+						tabWithError.addClass(«s:'parsley-error'»);
+					});
+				}
+			});
+		}
+
+		«m:// »«x:open tab with error
+»		«k:if» (options.openTabOnError) {
+			$.listen(«s:'parsley:field:error'», «k:function»() {
+				setTimeout(«k:function»() {
+					$(«s:'.powermail_tabmenu > .parsley-error:first'»).click();
+				}, 50);
+			});
+		}
+	};
+
+	«m:/**»«x:
+	 * Show Tab
+	 *
+	 * @param tab
+	 * @param form
+	 * @param options
+	 * @param clickedIndex
+	 * @return void
+	 */»
+	«k:function» «f:showTab»(«v:tab», «v:form», «v:options», «v:clickedIndex») {
+		$(«s:'.powermail_tabmenu li'», form).removeClass(«s:'act'»);
+		tab.addClass(«s:'act'»);
+		hideAllFieldsets(form, options)
+		$(«s:'.powermail_fieldset'», form).slice(clickedIndex, clickedIndex + 1).show();
+	}
+
+	«m:/**»«x:
+	 * Hide all fieldsets
+	 *
+	 * @param element
+	 * @param options
+	 * @return void
+	 */»
+	«k:function» «f:hideAllFieldsets»(«v:element», «v:options») {
+		element.children(options.container).hide();
+	}
+
+	«m:/**»«x:
+	 * Generate Button Navigation
+	 *
+	 * @param object element
+	 * @param array options
+	 * @return void
+	 */»
+	«k:function» «f:generateButtonNavigation»(«v:element», «v:options») {
+		«k:if» (!options.navigation) {
+			«k:return»;
+		}
+
+		«m:// »«x:buttons
+»		element.children(options.container).each(«k:function»(«v:i») {
+			«k:var» «v:navigationContainer» = $(«s:'<div />'»)
+				.addClass(«s:'powermail_fieldwrap'»)
+				.addClass(«s:'powermail_tab_navigation'»)
+				.appendTo($(«c:this»));
+			;
+			«k:if» (i > 0) {
+				navigationContainer.append(createPreviousButton(element, options));
+			}
+			«k:if» (i < (element.children(options.container).length - 1)) {
+				navigationContainer.append(createNextButton(element, options));
+			}
+		});
+	}
+
+	«m:/**»«x:
+	 * Create next button
+	 *
+	 * @param object element
+	 * @param array options
+	 * @return object
+	 */»
+	«k:function» «f:createPreviousButton»(«v:element», «v:options») {
+		«k:return» $(«s:'<a />'»)
+			.prop(«s:'href'», «s:'#'»)
+			.addClass(«s:'powermail_tab_navigation_previous'»)
+			.html(«s:'<'»)
+			.click(«k:function»(«v:e») {
+				e.preventDefault();
+				showPreviousTab(element, options);
+			});
+	}
+
+	«m:/**»«x:
+	 * Create next button
+	 *
+	 * @param object element
+	 * @param array options
+	 * @return object
+	 */»
+	«k:function» «f:createNextButton»(«v:element», «v:options») {
+		«k:return» $(«s:'<a />'»)
+			.prop(«s:'href'», «s:'#'»)
+			.addClass(«s:'powermail_tab_navigation_next'»)
+			.html(«s:'>'»)
+			.click(«k:function»(«v:e») {
+				e.preventDefault();
+				showNextTab(element, options);
+			});
+	}
+
+	«m:/**»«x:
+	 * Show next Tab
+	 *
+	 * @param object element
+	 * @param array options
+	 * @return void
+	 */»
+	«k:function» «f:showNextTab»(«v:element», «v:options») {
+		«k:var» «v:currentActiveTab» = element.find(«s:'#powermail_tabmenu > li'»).index($(«s:'.act'»));
+		element.find(«s:'#powermail_tabmenu > li.act'»).removeClass(«s:'act'»).next().addClass(«s:'act'»);
+		hideAllFieldsets(element, options);
+		element.find(«s:'.powermail_fieldset'»).slice(currentActiveTab + 1, currentActiveTab + 2).show();
+	}
+
+	«m:/**»«x:
+	 * Show previous Tab
+	 *
+	 * @param object element
+	 * @param array options
+	 * @return void
+	 */»
+	«k:function» «f:showPreviousTab»(«v:element», «v:options») {
+		«k:var» «v:currentActiveTab» = element.find(«s:'#powermail_tabmenu > li'»).index($(«s:'.act'»));
+		element.find(«s:'#powermail_tabmenu > li.act'»).removeClass(«s:'act'»).prev().addClass(«s:'act'»);
+		hideAllFieldsets(element, options);
+		element.find(«s:'.powermail_fieldset'»).slice(currentActiveTab - 1, currentActiveTab).show();
+	}
+
+	«m:/**»«x:
+	 * Generate Tabs
+	 *
+	 * @param object element
+	 * @param array options
+	 * @return void
+	 */»
+	«k:function» «f:generateTabNavigation»(«v:element», «v:options») {
+		«k:if» (!options.tabs) {
+			«k:return»;
+		}
+
+		«m:// »«x:generate menu
+»		«k:var» «v:$ul» = $(«s:'<ul />'», {
+			«s:'id'»: «s:'powermail_tabmenu'»,
+			«s:'class'»: «s:'powermail_tabmenu'»
+		}).insertBefore(
+			element.children(options.container).filter(«s:':first'»)
+		);
+
+		«m:// »«x:all containers
+»		element.children(options.container).each(«k:function»(«v:i», «v:$fieldset»){
+			«m://»«x:tab_menu
+»			«k:var» «v:li» = $(«s:'<li/>'»)
+				.html($(«c:this»).children(options.header).html())
+				.addClass((i==0) ? «s:'act'» : «s:''»)
+				.addClass(«s:'item'» + i)
+				.on(«s:'click keypress'», {
+					container: element.children(options.container),
+					fieldset: $($fieldset)
+				}, «k:function»() {
+					«k:var» «v:indexTab» = $(«s:'.powermail_tabmenu li'», element).index($(«c:this»));
+					showTab($(«c:this»), element, options, indexTab);
+				});
+			«k:if» (options.tabIndex) {
+				li.prop(«s:'tabindex'», i);
+			}
+			$ul.append(li);
+		});
+	}
+});

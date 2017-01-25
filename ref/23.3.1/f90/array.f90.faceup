@@ -1,0 +1,175 @@
+«m:! »«x:Copyright 2005, 2010 Allinea Software Ltd.
+»
+«m:! »«x:This program is free software; you can redistribute it and/or modify
+»«m:! »«x:it under the terms of the GNU General Public License as published by
+»«m:! »«x:the Free Software Foundation; either version 3 of the License, or
+»«m:! »«x:(at your option) any later version.
+»«m:!»«x:
+»«m:! »«x:This program is distributed in the hope that it will be useful,
+»«m:! »«x:but WITHOUT ANY WARRANTY; without even the implied warranty of
+»«m:! »«x:MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+»«m:! »«x:GNU General Public License for more details.
+»«m:!»«x:
+»«m:! »«x:You should have received a copy of the GNU General Public License
+»«m:! »«x:along with this program.  If not, see <http://www.gnu.org/licenses/>.
+»
+«k:program» «f:mainf»
+  «k:include» «s:'mpif.h'»
+
+  «t:real» ::«v: a(10), b(5, 5), c(13,15,17), conv1(3,3), conv2(3,3)»
+  «t:integer» ::«v: i, j, k, ierr, size, rank, bigdim»
+  «t:real» ::«v: rnum»
+  «t:real», «k:allocatable» ::«v: twod(:,:), threed(:,:,:)»
+  «t:integer», «k:allocatable» ::«v: seed(:)»
+  «t:real» ::«v: t »
+  «k:call» «f:MPI_INIT»(ierr)
+  «k:call» «f:MPI_COMM_SIZE»(MPI_COMM_WORLD, size, ierr)
+  «k:call» «f:MPI_COMM_RANK»(MPI_COMM_WORLD, rank, ierr)
+
+  «k:if» (rank«k:.eq.»0) «k:then»
+    «k:write»(*,*) «s:"A real convoluted example code"»
+  «k:end if»
+
+  b(:, :) = 0
+  «k:do» i = 1, 5
+     b(i, i) = 1
+  «k:end do»
+  
+  «k:if» (rank«k:.eq.»0) «k:then»
+    «k:write» (*,*) «s:"Start of input b"»
+    «k:write» (*,*) b
+    «k:write» (*,*) «s:"End of input b"»
+  «k:end if»
+
+  conv1 = «k:reshape»((/ 0, 0, 0, 0, 1, 0, 0, 0, 0 /), «k:shape»(conv1))
+  conv2 = «k:reshape»((/ 0.33, 0.0, 0.0, 0.0, 0.33, 0.0, 0.0, 0.0, 0.33 /), «k:shape»(conv2))
+  
+
+
+  
+  t = «k:mod»(«k:int»( mpi_wtime()), 128)
+
+  «k:call» «f:random_seed»(SIZE = n)
+  «k:allocate»(seed(n))
+
+  seed = rank + 37 + t;
+  
+  «k:call» «f:random_seed»(PUT = seed)
+  «k:deallocate»(seed)
+
+  «k:call» «f:random_number»(rnum)
+
+  «k:if» (rank«k:.eq.»0) «k:then»
+    «k:write» (*,*) rnum;
+  «k:end if»
+
+  bigdim = rnum * 1200
+  «k:allocate»(twod(bigdim, bigdim))
+  «k:allocate»(threed(13,15,17))
+
+
+
+  «k:call» «f:filltwo»(twod, bigdim, bigdim)
+  «k:call» «f:fillthree»(threed, 13, 15, 17)
+
+
+
+«m:! »«x:Try identity convolution with the identity matrix
+»
+  «k:call» «f:convolute»(b, 5, 5, conv1)
+
+«m:! »«x:Did it look good?
+»
+  «k:if» (rank«k:.eq.»0) «k:then»
+    «k:write»(*,*) «s:"Output of the convolution of b"»
+    «k:write»(*,*) b
+    «k:write»(*,*) «s:"End of the convolution of b"»
+  «k:end if»
+
+«m:! »«x:Now lets try the bigger array
+»  «k:call» «f:convolute»(twod, bigdim, bigdim, conv1)
+
+  «k:if» (rank«k:.eq.»0) «k:then»
+    «k:write»(*,*) «s:"Convolution of twod complete"»
+  «k:end if»
+
+  «k:call» «f:convolute»(twod, bigdim, bigdim, conv2)
+
+
+
+
+  «k:deallocate»(twod)
+  «k:deallocate»(threed)
+
+
+  «k:if» (rank«k:.eq.»0) «k:then»
+    «k:write»(*,*) «s:'This is a test.'»
+  «k:endif»
+  «k:call» «f:MPI_Finalize»()
+
+  «k:stop»
+
+
+
+«k:end program» «f:mainf»
+
+«k:subroutine» «f:fillone»(a, n)
+  «t:real» ::«v: a(n)»
+  «t:integer» ::«v: i»
+  «k:do» i = 1, n
+     a(i) = i
+  «k:end do»
+«k:end subroutine» «f:fillone»
+
+«k:subroutine» «f:filltwo»(b, n, m)
+  «t:real» ::«v: b(n, m)»
+  «t:integer» ::«v: i, j»
+  «k:do» i = 1, n
+     «k:do» j = 1, m
+        b(i, j) = i * m + j
+     «k:end do»
+  «k:end do»
+«k:end subroutine» «f:filltwo»
+
+«k:subroutine» «f:fillthree»(c, n, m, o)
+  «t:integer» ::«v: n, m, o»
+  «t:real» ::«v: c(n, m, o)»
+  «t:integer» ::«v: i, j, k»
+
+  «k:do» i = 1, n
+     «k:do» j = 1, m
+        «k:do» k = 1, o
+           c(i, j, k) = i * m * o + j * o + k
+        «k:end do»
+     «k:end do»
+  «k:end do»
+«k:end subroutine» «f:fillthree»
+
+  
+
+«k:subroutine» «f:convolute»(b, n, m, conv)
+  «t:real» ::«v: b(n, m)»
+  «t:integer» ::«v: i, j, k, l»
+  «t:real» ::«v: conv(3, 3)»
+
+  «t:real» ::«v: c(n, m)»
+
+  c(:,:) = 0
+
+  «k:do» i = 1, n
+     «k:do» j = 1, m
+        «k:do» k = 1, 3
+           «k:do» l = 1, 3
+              c(i, j) = c(i, j) +  «k:&»
+                 b(i + k - 2, j + l - 2) * conv(k, 1)
+           «k:end do»
+        «k:end do»
+     «k:end do»
+  «k:end do»
+
+  «k:do» i = 1, n
+     «k:do» j = 1, m
+        b(i, j) = c(i, j)
+     «k:end do»
+  «k:end do»
+«k:end subroutine» «f:convolute»

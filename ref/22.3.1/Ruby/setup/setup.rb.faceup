@@ -1,0 +1,1585 @@
+«m:#»«x:
+»«m:# »«x:setup.rb
+»«m:#»«x:
+»«m:# »«x:Copyright (c) 2000-2005 Minero Aoki
+»«m:#»«x:
+»«m:# »«x:This program is free software.
+»«m:# »«x:You can distribute/modify this program under the terms of
+»«m:# »«x:the GNU LGPL, Lesser General Public License version 2.1.
+»«m:#»«x:
+»
+«k:unless» «t:Enumerable».method_defined?(«c::map»)   «m:# »«x:Ruby 1.4.6
+»  «k:module» «t:Enumerable»
+    «k:alias» map collect
+  «k:end»
+«k:end»
+
+«k:unless» «t:File».respond_to?(«c::read»)   «m:# »«x:Ruby 1.6
+»  «k:def» «f:File.read»(fname)
+    open(fname) {|f|
+      «k:return» f.read
+    }
+  «k:end»
+«k:end»
+
+«k:unless» «t:Errno».const_defined?(:«t:ENOTEMPTY»)   «m:# »«x:Windows?
+»  «k:module» «t:Errno»
+    «k:class» «t:ENOTEMPTY»
+      «m:# »«x:We do not raise this exception, implementation is not needed.
+»    «k:end»
+  «k:end»
+«k:end»
+
+«k:def» «f:File.binread»(fname)
+  open(fname, «s:'rb'») {|f|
+    «k:return» f.read
+  }
+«k:end»
+
+«m:# »«x:for corrupted Windows' stat(2)
+»«k:def» «f:File.dir?»(path)
+  «t:File».directory?((path[-1,1] == «s:'/'») ? path : path + «s:'/'»)
+«k:end»
+
+
+«k:class» «t:ConfigTable»
+
+  include «t:Enumerable»
+
+  «k:def» «f:initialize»(rbconfig)
+    «v:@rbconfig» = rbconfig
+    «v:@items» = []
+    «v:@table» = {}
+    «m:# »«x:options
+»    «v:@install_prefix» = «v:nil»
+    «v:@config_opt» = «v:nil»
+    «v:@verbose» = «v:true»
+    «v:@no_harm» = «v:false»
+  «k:end»
+
+  attr_accessor «c::install_prefix»
+  attr_accessor «c::config_opt»
+
+  attr_writer «c::verbose»
+
+  «k:def» «f:verbose?»
+    «v:@verbose»
+  «k:end»
+
+  attr_writer «c::no_harm»
+
+  «k:def» «f:no_harm?»
+    «v:@no_harm»
+  «k:end»
+
+  «k:def» «f:[]»(key)
+    lookup(key).resolve(«v:self»)
+  «k:end»
+
+  «k:def» «f:[]=»(key, val)
+    lookup(key).set val
+  «k:end»
+
+  «k:def» «f:names»
+    «v:@items».map {|i| i.name }
+  «k:end»
+
+  «k:def» «f:each»(&block)
+    «v:@items».each(&block)
+  «k:end»
+
+  «k:def» «f:key?»(name)
+    «v:@table».key?(name)
+  «k:end»
+
+  «k:def» «f:lookup»(name)
+    «v:@table»[name] «k:or» setup_rb_error «s:"no such config item: »«v:#{name}»«s:"»
+  «k:end»
+
+  «k:def» «f:add»(item)
+    «v:@items».push item
+    «v:@table»[item.name] = item
+  «k:end»
+
+  «k:def» «f:remove»(name)
+    item = lookup(name)
+    «v:@items».delete_if {|i| i.name == name }
+    «v:@table».delete_if {|name, i| i.name == name }
+    item
+  «k:end»
+
+  «k:def» «f:load_script»(path, inst = «v:nil»)
+    «k:if» «t:File».file?(path)
+      «t:MetaConfigEnvironment».new(«v:self», inst).instance_eval «t:File».read(path), path
+    «k:end»
+  «k:end»
+
+  «k:def» «f:savefile»
+    «s:'.config'»
+  «k:end»
+
+  «k:def» «f:load_savefile»
+    «k:begin»
+      «t:File».foreach(savefile()) «k:do» |line|
+        k, v = *line.split(«s:/=/», 2)
+        «v:self»[k] = v.strip
+      «k:end»
+    «k:rescue» «t:Errno»::«t:ENOENT»
+      setup_rb_error «v:$!».message + «s:"\n»«v:#{File.basename($0)}»«s: config first"»
+    «k:end»
+  «k:end»
+
+  «k:def» «f:save»
+    «v:@items».each {|i| i.value }
+    «t:File».open(savefile(), «s:'w'») {|f|
+      «v:@items».each «k:do» |i|
+        f.printf «s:"%s=%s\n"», i.name, i.value «k:if» i.value? «k:and» i.value
+      «k:end»
+    }
+  «k:end»
+
+  «k:def» «f:load_standard_entries»
+    standard_entries(«v:@rbconfig»).each «k:do» |ent|
+      add ent
+    «k:end»
+  «k:end»
+
+  «k:def» «f:standard_entries»(rbconfig)
+    c = rbconfig
+
+    rubypath = «t:File».join(c[«s:'bindir'»], c[«s:'ruby_install_name'»] + c[«s:'EXEEXT'»])
+
+    major = c[«s:'MAJOR'»].to_i
+    minor = c[«s:'MINOR'»].to_i
+    teeny = c[«s:'TEENY'»].to_i
+    version = «s:"»«v:#{major}»«s:.»«v:#{minor}»«s:"»
+
+    «m:# »«x:ruby ver. >= 1.4.4?
+»    newpath_p = ((major >= 2) «k:or»
+                 ((major == 1) «k:and»
+                  ((minor >= 5) «k:or»
+                   ((minor == 4) «k:and» (teeny >= 4)))))
+
+    «k:if» c[«s:'rubylibdir'»]
+      «m:# »«x:V > 1.6.3
+»      libruby         = «s:"»«v:#{c['prefix']}»«s:/lib/ruby"»
+      librubyver      = c[«s:'rubylibdir'»]
+      librubyverarch  = c[«s:'archdir'»]
+      siteruby        = c[«s:'sitedir'»]
+      siterubyver     = c[«s:'sitelibdir'»]
+      siterubyverarch = c[«s:'sitearchdir'»]
+    «k:elsif» newpath_p
+      «m:# »«x:1.4.4 <= V <= 1.6.3
+»      libruby         = «s:"»«v:#{c['prefix']}»«s:/lib/ruby"»
+      librubyver      = «s:"»«v:#{c['prefix']}»«s:/lib/ruby/»«v:#{version}»«s:"»
+      librubyverarch  = «s:"»«v:#{c['prefix']}»«s:/lib/ruby/»«v:#{version}»«s:/»«v:#{c['arch']}»«s:"»
+      siteruby        = c[«s:'sitedir'»]
+      siterubyver     = «s:"$siteruby/»«v:#{version}»«s:"»
+      siterubyverarch = «s:"$siterubyver/»«v:#{c['arch']}»«s:"»
+    «k:else»
+      «m:# »«x:V < 1.4.4
+»      libruby         = «s:"»«v:#{c['prefix']}»«s:/lib/ruby"»
+      librubyver      = «s:"»«v:#{c['prefix']}»«s:/lib/ruby/»«v:#{version}»«s:"»
+      librubyverarch  = «s:"»«v:#{c['prefix']}»«s:/lib/ruby/»«v:#{version}»«s:/»«v:#{c['arch']}»«s:"»
+      siteruby        = «s:"»«v:#{c['prefix']}»«s:/lib/ruby/»«v:#{version}»«s:/site_ruby"»
+      siterubyver     = siteruby
+      siterubyverarch = «s:"$siterubyver/»«v:#{c['arch']}»«s:"»
+    «k:end»
+    parameterize = lambda {|path|
+      path.sub(«s:/\A»«v:#{Regexp.quote(c['prefix'])}»«s:/», «s:'$prefix'»)
+    }
+
+    «k:if» arg = c[«s:'configure_args'»].split.detect {|arg| /--with-make-prog=/ =~ arg }
+      makeprog = arg.sub(«s:/'/», «s:''»).split(«s:/=/», 2)[1]
+    «k:else»
+      makeprog = «s:'make'»
+    «k:end»
+
+    [
+      «t:ExecItem».new(«s:'installdirs'», «s:'std/site/home'»,
+                   «s:'std: install under libruby; site: install under site_ruby; home: install under $HOME'»)\
+          {|val, table|
+            «k:case» val
+            «k:when» «s:'std'»
+              table[«s:'rbdir'»] = «s:'$librubyver'»
+              table[«s:'sodir'»] = «s:'$librubyverarch'»
+            «k:when» «s:'site'»
+              table[«s:'rbdir'»] = «s:'$siterubyver'»
+              table[«s:'sodir'»] = «s:'$siterubyverarch'»
+            «k:when» «s:'home'»
+              setup_rb_error «s:'$HOME was not set'» «k:unless» «t:ENV»[«s:'HOME'»]
+              table[«s:'prefix'»] = «t:ENV»[«s:'HOME'»]
+              table[«s:'rbdir'»] = «s:'$libdir/ruby'»
+              table[«s:'sodir'»] = «s:'$libdir/ruby'»
+            «k:end»
+          },
+      «t:PathItem».new(«s:'prefix'», «s:'path'», c[«s:'prefix'»],
+                   «s:'path prefix of target environment'»),
+      «t:PathItem».new(«s:'bindir'», «s:'path'», parameterize.call(c[«s:'bindir'»]),
+                   «s:'the directory for commands'»),
+      «t:PathItem».new(«s:'libdir'», «s:'path'», parameterize.call(c[«s:'libdir'»]),
+                   «s:'the directory for libraries'»),
+      «t:PathItem».new(«s:'datadir'», «s:'path'», parameterize.call(c[«s:'datadir'»]),
+                   «s:'the directory for shared data'»),
+      «t:PathItem».new(«s:'mandir'», «s:'path'», parameterize.call(c[«s:'mandir'»]),
+                   «s:'the directory for man pages'»),
+      «t:PathItem».new(«s:'sysconfdir'», «s:'path'», parameterize.call(c[«s:'sysconfdir'»]),
+                   «s:'the directory for system configuration files'»),
+      «t:PathItem».new(«s:'localstatedir'», «s:'path'», parameterize.call(c[«s:'localstatedir'»]),
+                   «s:'the directory for local state data'»),
+      «t:PathItem».new(«s:'libruby'», «s:'path'», libruby,
+                   «s:'the directory for ruby libraries'»),
+      «t:PathItem».new(«s:'librubyver'», «s:'path'», librubyver,
+                   «s:'the directory for standard ruby libraries'»),
+      «t:PathItem».new(«s:'librubyverarch'», «s:'path'», librubyverarch,
+                   «s:'the directory for standard ruby extensions'»),
+      «t:PathItem».new(«s:'siteruby'», «s:'path'», siteruby,
+          «s:'the directory for version-independent aux ruby libraries'»),
+      «t:PathItem».new(«s:'siterubyver'», «s:'path'», siterubyver,
+                   «s:'the directory for aux ruby libraries'»),
+      «t:PathItem».new(«s:'siterubyverarch'», «s:'path'», siterubyverarch,
+                   «s:'the directory for aux ruby binaries'»),
+      «t:PathItem».new(«s:'rbdir'», «s:'path'», «s:'$siterubyver'»,
+                   «s:'the directory for ruby scripts'»),
+      «t:PathItem».new(«s:'sodir'», «s:'path'», «s:'$siterubyverarch'»,
+                   «s:'the directory for ruby extentions'»),
+      «t:PathItem».new(«s:'rubypath'», «s:'path'», rubypath,
+                   «s:'the path to set to #! line'»),
+      «t:ProgramItem».new(«s:'rubyprog'», «s:'name'», rubypath,
+                      «s:'the ruby program using for installation'»),
+      «t:ProgramItem».new(«s:'makeprog'», «s:'name'», makeprog,
+                      «s:'the make program to compile ruby extentions'»),
+      «t:SelectItem».new(«s:'shebang'», «s:'all/ruby/never'», «s:'ruby'»,
+                     «s:'shebang line (#!) editing mode'»),
+      «t:BoolItem».new(«s:'without-ext'», «s:'yes/no'», «s:'no'»,
+                   «s:'does not compile/install ruby extentions'»)
+    ]
+  «k:end»
+  «k:private» «c::standard_entries»
+
+  «k:def» «f:load_multipackage_entries»
+    multipackage_entries().each «k:do» |ent|
+      add ent
+    «k:end»
+  «k:end»
+
+  «k:def» «f:multipackage_entries»
+    [
+      «t:PackageSelectionItem».new(«s:'with'», «s:'name,name...'», «s:''», «s:'ALL'»,
+                               «s:'package names that you want to install'»),
+      «t:PackageSelectionItem».new(«s:'without'», «s:'name,name...'», «s:''», «s:'NONE'»,
+                               «s:'package names that you do not want to install'»)
+    ]
+  «k:end»
+  «k:private» «c::multipackage_entries»
+
+  «t:ALIASES» = {
+    «s:'std-ruby'»         => «s:'librubyver'»,
+    «s:'stdruby'»          => «s:'librubyver'»,
+    «s:'rubylibdir'»       => «s:'librubyver'»,
+    «s:'archdir'»          => «s:'librubyverarch'»,
+    «s:'site-ruby-common'» => «s:'siteruby'»,     «m:# »«x:For backward compatibility
+»    «s:'site-ruby'»        => «s:'siterubyver'»,  «m:# »«x:For backward compatibility
+»    «s:'bin-dir'»          => «s:'bindir'»,
+    «s:'bin-dir'»          => «s:'bindir'»,
+    «s:'rb-dir'»           => «s:'rbdir'»,
+    «s:'so-dir'»           => «s:'sodir'»,
+    «s:'data-dir'»         => «s:'datadir'»,
+    «s:'ruby-path'»        => «s:'rubypath'»,
+    «s:'ruby-prog'»        => «s:'rubyprog'»,
+    «s:'ruby'»             => «s:'rubyprog'»,
+    «s:'make-prog'»        => «s:'makeprog'»,
+    «s:'make'»             => «s:'makeprog'»
+  }
+
+  «k:def» «f:fixup»
+    «t:ALIASES».each «k:do» |ali, name|
+      «v:@table»[ali] = «v:@table»[name]
+    «k:end»
+    «v:@items».freeze
+    «v:@table».freeze
+    «v:@options_re» = «s:/\A--(»«v:#{@table.keys.join('|')}»«s:)(?:=(.*))?\z/»
+  «k:end»
+
+  «k:def» «f:parse_opt»(opt)
+    m = «v:@options_re».match(opt) «k:or» setup_rb_error «s:"config: unknown option »«v:#{opt}»«s:"»
+    m.to_a[1,2]
+  «k:end»
+
+  «k:def» «f:dllext»
+    «v:@rbconfig»[«s:'DLEXT'»]
+  «k:end»
+
+  «k:def» «f:value_config?»(name)
+    lookup(name).value?
+  «k:end»
+
+  «k:class» «t:Item»
+    «k:def» «f:initialize»(name, template, default, desc)
+      «v:@name» = name.freeze
+      «v:@template» = template
+      «v:@value» = default
+      «v:@default» = default
+      «v:@description» = desc
+    «k:end»
+
+    attr_reader «c::name»
+    attr_reader «c::description»
+
+    attr_accessor «c::default»
+    «k:alias» help_default default
+
+    «k:def» «f:help_opt»
+      «s:"--»«v:#{@name}»«s:=»«v:#{@template}»«s:"»
+    «k:end»
+
+    «k:def» «f:value?»
+      «v:true»
+    «k:end»
+
+    «k:def» «f:value»
+      «v:@value»
+    «k:end»
+
+    «k:def» «f:resolve»(table)
+      «v:@value».gsub(%r<\«v:$(»[^/]+)>) { table[«v:$1»] }
+    «k:end»
+
+    «k:def» «f:set»(val)
+      «v:@value» = check(val)
+    «k:end»
+
+    «k:private»
+
+    «k:def» «f:check»(val)
+      setup_rb_error «s:"config: --»«v:#{name}»«s: requires argument"» «k:unless» val
+      val
+    «k:end»
+  «k:end»
+
+  «k:class» «t:BoolItem» < «t:Item»
+    «k:def» «f:config_type»
+      «s:'bool'»
+    «k:end»
+
+    «k:def» «f:help_opt»
+      «s:"--»«v:#{@name}»«s:"»
+    «k:end»
+
+    «k:private»
+
+    «k:def» «f:check»(val)
+      «k:return» «s:'yes'» «k:unless» val
+      «k:case» val
+      «k:when» «s:/\Ay(es)?\z/»i, «s:/\At(rue)?\z/»i «k:then» «s:'yes'»
+      «k:when» «s:/\An(o)?\z/»i, «s:/\Af(alse)\z/»i  «k:then» «s:'no'»
+      «k:else»
+        setup_rb_error «s:"config: --»«v:#{@name}»«s: accepts only yes/no for argument"»
+      «k:end»
+    «k:end»
+  «k:end»
+
+  «k:class» «t:PathItem» < «t:Item»
+    «k:def» «f:config_type»
+      «s:'path'»
+    «k:end»
+
+    «k:private»
+
+    «k:def» «f:check»(path)
+      setup_rb_error «s:"config: --»«v:#{@name}»«s: requires argument"»  «k:unless» path
+      path[0,1] == «s:'$'» ? path : «t:File».expand_path(path)
+    «k:end»
+  «k:end»
+
+  «k:class» «t:ProgramItem» < «t:Item»
+    «k:def» «f:config_type»
+      «s:'program'»
+    «k:end»
+  «k:end»
+
+  «k:class» «t:SelectItem» < «t:Item»
+    «k:def» «f:initialize»(name, selection, default, desc)
+      «k:super»
+      «v:@ok» = selection.split(«s:'/'»)
+    «k:end»
+
+    «k:def» «f:config_type»
+      «s:'select'»
+    «k:end»
+
+    «k:private»
+
+    «k:def» «f:check»(val)
+      «k:unless» «v:@ok».include?(val.strip)
+        setup_rb_error «s:"config: use --»«v:#{@name}»«s:=»«v:#{@template}»«s: (»«v:#{val}»«s:)"»
+      «k:end»
+      val.strip
+    «k:end»
+  «k:end»
+
+  «k:class» «t:ExecItem» < «t:Item»
+    «k:def» «f:initialize»(name, selection, desc, &block)
+      «k:super» name, selection, «v:nil», desc
+      «v:@ok» = selection.split(«s:'/'»)
+      «v:@action» = block
+    «k:end»
+
+    «k:def» «f:config_type»
+      «s:'exec'»
+    «k:end»
+
+    «k:def» «f:value?»
+      «v:false»
+    «k:end»
+
+    «k:def» «f:resolve»(table)
+      setup_rb_error «s:"$»«v:#{name()}»«s: wrongly used as option value"»
+    «k:end»
+
+    «k:undef» set
+
+    «k:def» «f:evaluate»(val, table)
+      v = val.strip.downcase
+      «k:unless» «v:@ok».include?(v)
+        setup_rb_error «s:"invalid option --»«v:#{@name}»«s:=»«v:#{val}»«s: (use »«v:#{@template}»«s:)"»
+      «k:end»
+      «v:@action».call v, table
+    «k:end»
+  «k:end»
+
+  «k:class» «t:PackageSelectionItem» < «t:Item»
+    «k:def» «f:initialize»(name, template, default, help_default, desc)
+      «k:super» name, template, default, desc
+      «v:@help_default» = help_default
+    «k:end»
+
+    attr_reader «c::help_default»
+
+    «k:def» «f:config_type»
+      «s:'package'»
+    «k:end»
+
+    «k:private»
+
+    «k:def» «f:check»(val)
+      «k:unless» «t:File».dir?(«s:"packages/»«v:#{val}»«s:"»)
+        setup_rb_error «s:"config: no such package: »«v:#{val}»«s:"»
+      «k:end»
+      val
+    «k:end»
+  «k:end»
+
+  «k:class» «t:MetaConfigEnvironment»
+    «k:def» «f:initialize»(config, installer)
+      «v:@config» = config
+      «v:@installer» = installer
+    «k:end»
+
+    «k:def» «f:config_names»
+      «v:@config».names
+    «k:end»
+
+    «k:def» «f:config?»(name)
+      «v:@config».key?(name)
+    «k:end»
+
+    «k:def» «f:bool_config?»(name)
+      «v:@config».lookup(name).config_type == «s:'bool'»
+    «k:end»
+
+    «k:def» «f:path_config?»(name)
+      «v:@config».lookup(name).config_type == «s:'path'»
+    «k:end»
+
+    «k:def» «f:value_config?»(name)
+      «v:@config».lookup(name).config_type != «s:'exec'»
+    «k:end»
+
+    «k:def» «f:add_config»(item)
+      «v:@config».add item
+    «k:end»
+
+    «k:def» «f:add_bool_config»(name, default, desc)
+      «v:@config».add «t:BoolItem».new(name, «s:'yes/no'», default ? «s:'yes'» : «s:'no'», desc)
+    «k:end»
+
+    «k:def» «f:add_path_config»(name, default, desc)
+      «v:@config».add «t:PathItem».new(name, «s:'path'», default, desc)
+    «k:end»
+
+    «k:def» «f:set_config_default»(name, default)
+      «v:@config».lookup(name).default = default
+    «k:end»
+
+    «k:def» «f:remove_config»(name)
+      «v:@config».remove(name)
+    «k:end»
+
+    «m:# »«x:For only multipackage
+»    «k:def» «f:packages»
+      «k:raise» «s:'[setup.rb fatal] multi-package metaconfig API packages() called for single-package; contact application package vendor'» «k:unless» «v:@installer»
+      «v:@installer».packages
+    «k:end»
+
+    «m:# »«x:For only multipackage
+»    «k:def» «f:declare_packages»(list)
+      «k:raise» «s:'[setup.rb fatal] multi-package metaconfig API declare_packages() called for single-package; contact application package vendor'» «k:unless» «v:@installer»
+      «v:@installer».packages = list
+    «k:end»
+  «k:end»
+
+«k:end»   «m:# »«x:class ConfigTable
+»
+
+«m:# »«x:This module requires: #verbose?, #no_harm?
+»«k:module» «t:FileOperations»
+
+  «k:def» «f:mkdir_p»(dirname, prefix = «v:nil»)
+    dirname = prefix + «t:File».expand_path(dirname) «k:if» prefix
+    «v:$stderr».puts «s:"mkdir -p »«v:#{dirname}»«s:"» «k:if» verbose?
+    «k:return» «k:if» no_harm?
+
+    «m:# »«x:Does not check '/', it's too abnormal.
+»    dirs = «t:File».expand_path(dirname).split(%r<(?=/)>)
+    «k:if» «s:/\A[a-z]:\z/»i =~ dirs[0]
+      disk = dirs.shift
+      dirs[0] = disk + dirs[0]
+    «k:end»
+    dirs.each_index «k:do» |idx|
+      path = dirs[0..idx].join(«s:''»)
+      «t:Dir».mkdir path «k:unless» «t:File».dir?(path)
+    «k:end»
+  «k:end»
+
+  «k:def» «f:rm_f»(path)
+    «v:$stderr».puts «s:"rm -f »«v:#{path}»«s:"» «k:if» verbose?
+    «k:return» «k:if» no_harm?
+    force_remove_file path
+  «k:end»
+
+  «k:def» «f:rm_rf»(path)
+    «v:$stderr».puts «s:"rm -rf »«v:#{path}»«s:"» «k:if» verbose?
+    «k:return» «k:if» no_harm?
+    remove_tree path
+  «k:end»
+
+  «k:def» «f:remove_tree»(path)
+    «k:if» «t:File».symlink?(path)
+      remove_file path
+    «k:elsif» «t:File».dir?(path)
+      remove_tree0 path
+    «k:else»
+      force_remove_file path
+    «k:end»
+  «k:end»
+
+  «k:def» «f:remove_tree0»(path)
+    «t:Dir».foreach(path) «k:do» |ent|
+      «k:next» «k:if» ent == «s:'.'»
+      «k:next» «k:if» ent == «s:'..'»
+      entpath = «s:"»«v:#{path}»«s:/»«v:#{ent}»«s:"»
+      «k:if» «t:File».symlink?(entpath)
+        remove_file entpath
+      «k:elsif» «t:File».dir?(entpath)
+        remove_tree0 entpath
+      «k:else»
+        force_remove_file entpath
+      «k:end»
+    «k:end»
+    «k:begin»
+      «t:Dir».rmdir path
+    «k:rescue» «t:Errno»::«t:ENOTEMPTY»
+      «m:# »«x:directory may not be empty
+»    «k:end»
+  «k:end»
+
+  «k:def» «f:move_file»(src, dest)
+    force_remove_file dest
+    «k:begin»
+      «t:File».rename src, dest
+    «k:rescue»
+      «t:File».open(dest, «s:'wb'») {|f|
+        f.write «t:File».binread(src)
+      }
+      «t:File».chmod «t:File».stat(src).mode, dest
+      «t:File».unlink src
+    «k:end»
+  «k:end»
+
+  «k:def» «f:force_remove_file»(path)
+    «k:begin»
+      remove_file path
+    «k:rescue»
+    «k:end»
+  «k:end»
+
+  «k:def» «f:remove_file»(path)
+    «t:File».chmod 0777, path
+    «t:File».unlink path
+  «k:end»
+
+  «k:def» «f:install»(from, dest, mode, prefix = «v:nil»)
+    «v:$stderr».puts «s:"install »«v:#{from}»«s: »«v:#{dest}»«s:"» «k:if» verbose?
+    «k:return» «k:if» no_harm?
+
+    realdest = prefix ? prefix + «t:File».expand_path(dest) : dest
+    realdest = «t:File».join(realdest, «t:File».basename(from)) «k:if» «t:File».dir?(realdest)
+    str = «t:File».binread(from)
+    «k:if» diff?(str, realdest)
+      verbose_off {
+        rm_f realdest «k:if» «t:File».exist?(realdest)
+      }
+      «t:File».open(realdest, «s:'wb'») {|f|
+        f.write str
+      }
+      «t:File».chmod mode, realdest
+
+      «t:File».open(«s:"»«v:#{objdir_root()}»«s:/InstalledFiles"», «s:'a'») {|f|
+        «k:if» prefix
+          f.puts realdest.sub(prefix, «s:''»)
+        «k:else»
+          f.puts realdest
+        «k:end»
+      }
+    «k:end»
+  «k:end»
+
+  «k:def» «f:diff?»(new_content, path)
+    «k:return» «v:true» «k:unless» «t:File».exist?(path)
+    new_content != «t:File».binread(path)
+  «k:end»
+
+  «k:def» «f:command»(*args)
+    «v:$stderr».puts args.join(«s:' '») «k:if» verbose?
+    system(*args) «k:or» «k:raise» «t:RuntimeError»,
+        «s:"system(»«v:#{args.map{|a| a.inspect }»«s:.join(' ')}) failed"»
+  «k:end»
+
+  «k:def» «f:ruby»(*args)
+    command config(«s:'rubyprog'»), *args
+  «k:end»
+  
+  «k:def» «f:make»(task = «v:nil»)
+    command(*[config(«s:'makeprog'»), task].compact)
+  «k:end»
+
+  «k:def» «f:extdir?»(dir)
+    «t:File».exist?(«s:"»«v:#{dir}»«s:/MANIFEST"») «k:or» «t:File».exist?(«s:"»«v:#{dir}»«s:/extconf.rb"»)
+  «k:end»
+
+  «k:def» «f:files_of»(dir)
+    «t:Dir».open(dir) {|d|
+      «k:return» d.select {|ent| «t:File».file?(«s:"»«v:#{dir}»«s:/»«v:#{ent}»«s:"») }
+    }
+  «k:end»
+
+  «t:DIR_REJECT» = %w( . .. «t:CVS» «t:SCCS» «t:RCS» «t:CVS».adm .svn )
+
+  «k:def» «f:directories_of»(dir)
+    «t:Dir».open(dir) {|d|
+      «k:return» d.select {|ent| «t:File».dir?(«s:"»«v:#{dir}»«s:/»«v:#{ent}»«s:"») } - «t:DIR_REJECT»
+    }
+  «k:end»
+
+«k:end»
+
+
+«m:# »«x:This module requires: #srcdir_root, #objdir_root, #relpath
+»«k:module» «t:HookScriptAPI»
+
+  «k:def» «f:get_config»(key)
+    «v:@config»[key]
+  «k:end»
+
+  «k:alias» config get_config
+
+  «m:# »«x:obsolete: use metaconfig to change configuration
+»  «k:def» «f:set_config»(key, val)
+    «v:@config»[key] = val
+  «k:end»
+
+  «m:#»«x:
+»  «m:# »«x:srcdir/objdir (works only in the package directory)
+»  «m:#»«x:
+»
+  «k:def» «f:curr_srcdir»
+    «s:"»«v:#{srcdir_root()}»«s:/»«v:#{relpath()}»«s:"»
+  «k:end»
+
+  «k:def» «f:curr_objdir»
+    «s:"»«v:#{objdir_root()}»«s:/»«v:#{relpath()}»«s:"»
+  «k:end»
+
+  «k:def» «f:srcfile»(path)
+    «s:"»«v:#{curr_srcdir()}»«s:/»«v:#{path}»«s:"»
+  «k:end»
+
+  «k:def» «f:srcexist?»(path)
+    «t:File».exist?(srcfile(path))
+  «k:end»
+
+  «k:def» «f:srcdirectory?»(path)
+    «t:File».dir?(srcfile(path))
+  «k:end»
+  
+  «k:def» «f:srcfile?»(path)
+    «t:File».file?(srcfile(path))
+  «k:end»
+
+  «k:def» «f:srcentries»(path = «s:'.'»)
+    «t:Dir».open(«s:"»«v:#{curr_srcdir()}»«s:/»«v:#{path}»«s:"») {|d|
+      «k:return» d.to_a - %w(. ..)
+    }
+  «k:end»
+
+  «k:def» «f:srcfiles»(path = «s:'.'»)
+    srcentries(path).select {|fname|
+      «t:File».file?(«t:File».join(curr_srcdir(), path, fname))
+    }
+  «k:end»
+
+  «k:def» «f:srcdirectories»(path = «s:'.'»)
+    srcentries(path).select {|fname|
+      «t:File».dir?(«t:File».join(curr_srcdir(), path, fname))
+    }
+  «k:end»
+
+«k:end»
+
+
+«k:class» «t:ToplevelInstaller»
+
+  «t:Version»   = «s:'3.4.1'»
+  «t:Copyright» = «s:'Copyright (c) 2000-2005 Minero Aoki'»
+
+  «t:TASKS» = [
+    [ «s:'all'»,      «s:'do config, setup, then install'» ],
+    [ «s:'config'»,   «s:'saves your configurations'» ],
+    [ «s:'show'»,     «s:'shows current configuration'» ],
+    [ «s:'setup'»,    «s:'compiles ruby extentions and others'» ],
+    [ «s:'install'»,  «s:'installs files'» ],
+    [ «s:'test'»,     «s:'run all tests in test/'» ],
+    [ «s:'clean'»,    «s:"does `make clean' for each extention"» ],
+    [ «s:'distclean'»,«s:"does `make distclean' for each extention"» ]
+  ]
+
+  «k:def» «f:ToplevelInstaller.invoke»
+    config = «t:ConfigTable».new(load_rbconfig())
+    config.load_standard_entries
+    config.load_multipackage_entries «k:if» multipackage?
+    config.fixup
+    klass = (multipackage?() ? «t:ToplevelInstallerMulti» : «t:ToplevelInstaller»)
+    klass.new(«t:File».dirname(«v:$0»), config).invoke
+  «k:end»
+
+  «k:def» «f:ToplevelInstaller.multipackage?»
+    «t:File».dir?(«t:File».dirname(«v:$0») + «s:'/packages'»)
+  «k:end»
+
+  «k:def» «f:ToplevelInstaller.load_rbconfig»
+    «k:if» arg = «t:ARGV».detect {|arg| /\«t:A»--rbconfig=/ =~ arg }
+      «t:ARGV».delete(arg)
+      load «t:File».expand_path(arg.split(«s:/=/», 2)[1])
+      «v:$"».push «s:'rbconfig.rb'»
+    «k:else»
+      require «s:'rbconfig'»
+    «k:end»
+    ::«t:Config»::«t:CONFIG»
+  «k:end»
+
+  «k:def» «f:initialize»(ardir_root, config)
+    «v:@ardir» = «t:File».expand_path(ardir_root)
+    «v:@config» = config
+    «m:# »«x:cache
+»    «v:@valid_task_re» = «v:nil»
+  «k:end»
+
+  «k:def» «f:config»(key)
+    «v:@config»[key]
+  «k:end»
+
+  «k:def» «f:inspect»
+    «s:"#<»«v:#{self.class}»«s: »«v:#{__id__()}»«s:>"»
+  «k:end»
+
+  «k:def» «f:invoke»
+    run_metaconfigs
+    «k:case» task = parsearg_global()
+    «k:when» «v:nil», «s:'all'»
+      parsearg_config
+      init_installers
+      exec_config
+      exec_setup
+      exec_install
+    «k:else»
+      «k:case» task
+      «k:when» «s:'config'», «s:'test'»
+        ;
+      «k:when» «s:'clean'», «s:'distclean'»
+        «v:@config».load_savefile «k:if» «t:File».exist?(«v:@config».savefile)
+      «k:else»
+        «v:@config».load_savefile
+      «k:end»
+      __send__ «s:"parsearg_»«v:#{task}»«s:"»
+      init_installers
+      __send__ «s:"exec_»«v:#{task}»«s:"»
+    «k:end»
+  «k:end»
+  
+  «k:def» «f:run_metaconfigs»
+    «v:@config».load_script «s:"»«v:#{@ardir}»«s:/metaconfig"»
+  «k:end»
+
+  «k:def» «f:init_installers»
+    «v:@installer» = «t:Installer».new(«v:@config», «v:@ardir», «t:File».expand_path(«s:'.'»))
+  «k:end»
+
+  «m:#»«x:
+»  «m:# »«x:Hook Script API bases
+»  «m:#»«x:
+»
+  «k:def» «f:srcdir_root»
+    «v:@ardir»
+  «k:end»
+
+  «k:def» «f:objdir_root»
+    «s:'.'»
+  «k:end»
+
+  «k:def» «f:relpath»
+    «s:'.'»
+  «k:end»
+
+  «m:#»«x:
+»  «m:# »«x:Option Parsing
+»  «m:#»«x:
+»
+  «k:def» «f:parsearg_global»
+    «k:while» arg = «t:ARGV».shift
+      «k:case» arg
+      «k:when» «s:/\A\w+\z/»
+        setup_rb_error «s:"invalid task: »«v:#{arg}»«s:"» «k:unless» valid_task?(arg)
+        «k:return» arg
+      «k:when» «s:'-q'», «s:'--quiet'»
+        «v:@config».verbose = «v:false»
+      «k:when» «s:'--verbose'»
+        «v:@config».verbose = «v:true»
+      «k:when» «s:'--help'»
+        print_usage «v:$stdout»
+        exit 0
+      «k:when» «s:'--version'»
+        puts «s:"»«v:#{File.basename($0)}»«s: version »«v:#{Version}»«s:"»
+        exit 0
+      «k:when» «s:'--copyright'»
+        puts «t:Copyright»
+        exit 0
+      «k:else»
+        setup_rb_error «s:"unknown global option '»«v:#{arg}»«s:'"»
+      «k:end»
+    «k:end»
+    «v:nil»
+  «k:end»
+
+  «k:def» «f:valid_task?»(t)
+    valid_task_re() =~ t
+  «k:end»
+
+  «k:def» «f:valid_task_re»
+    «v:@valid_task_re» ||= «s:/\A(?:»«v:#{TASKS.map {|task,desc| task }»«s:.join('|')})\z/»
+  «k:end»
+
+  «k:def» «f:parsearg_no_options»
+    «k:unless» «t:ARGV».empty?
+      task = caller(0).first.slice(%r<«s:`parsearg_(\w+)'>, 1)
+      setup_rb_error "»«v:#{task}»«s:: unknown options: »«v:#{ARGV.join(' ')}»«s:"
+    end
+  end
+
+  alias parsearg_show       parsearg_no_options
+  alias parsearg_setup      parsearg_no_options
+  alias parsearg_test       parsearg_no_options
+  alias parsearg_clean      parsearg_no_options
+  alias parsearg_distclean  parsearg_no_options
+
+  def parsearg_config
+    evalopt = []
+    set = []
+    @config.config_opt = []
+    while i = ARGV.shift
+      if /\A--?\z/ =~ i
+        @config.config_opt = ARGV.dup
+        break
+      end
+      name, value = *@config.parse_opt(i)
+      if @config.value_config?(name)
+        @config[name] = value
+      else
+        evalopt.push [name, value]
+      end
+      set.push name
+    end
+    evalopt.each do |name, value|
+      @config.lookup(name).evaluate value, @config
+    end
+    # Check if configuration is valid
+    set.each do |n|
+      @config[n] if @config.value_config?(n)
+    end
+  end
+
+  def parsearg_install
+    @config.no_harm = false
+    @config.install_prefix = ''
+    while a = ARGV.shift
+      case a
+      when '--no-harm'
+        @config.no_harm = true
+      when /\A--prefix=/
+        path = a.split(/=/, 2)[1]
+        path = File.expand_path(path) unless path[0,1] == '/'
+        @config.install_prefix = path
+      else
+        setup_rb_error "install: unknown option »«v:#{a}»«s:"
+      end
+    end
+  end
+
+  def print_usage(out)
+    out.puts 'Typical Installation Procedure:'
+    out.puts "  $ ruby »«v:#{File.basename $0}»«s: config"
+    out.puts "  $ ruby »«v:#{File.basename $0}»«s: setup"
+    out.puts "  # ruby »«v:#{File.basename $0}»«s: install (may require root privilege)"
+    out.puts
+    out.puts 'Detailed Usage:'
+    out.puts "  ruby »«v:#{File.basename $0}»«s: <global option>"
+    out.puts "  ruby »«v:#{File.basename $0}»«s: [<global options>] <task> [<task options>]"
+
+    fmt = "  %-24s %s\n"
+    out.puts
+    out.puts 'Global options:'
+    out.printf fmt, '-q,--quiet',   'suppress message outputs'
+    out.printf fmt, '   --verbose', 'output messages verbosely'
+    out.printf fmt, '   --help',    'print this message'
+    out.printf fmt, '   --version', 'print version and quit'
+    out.printf fmt, '   --copyright',  'print copyright and quit'
+    out.puts
+    out.puts 'Tasks:'
+    TASKS.each do |name, desc|
+      out.printf fmt, name, desc
+    end
+
+    fmt = "  %-24s %s [%s]\n"
+    out.puts
+    out.puts 'Options for CONFIG or ALL:'
+    @config.each do |item|
+      out.printf fmt, item.help_opt, item.description, item.help_default
+    end
+    out.printf fmt, '--rbconfig=path', 'rbconfig.rb to load',"running ruby's"
+    out.puts
+    out.puts 'Options for INSTALL:'
+    out.printf fmt, '--no-harm', 'only display what to do if given', 'off'
+    out.printf fmt, '--prefix=path',  'install path prefix', ''
+    out.puts
+  end
+
+  #
+  # Task Handlers
+  #
+
+  def exec_config
+    @installer.exec_config
+    @config.save   # must be final
+  end
+
+  def exec_setup
+    @installer.exec_setup
+  end
+
+  def exec_install
+    @installer.exec_install
+  end
+
+  def exec_test
+    @installer.exec_test
+  end
+
+  def exec_show
+    @config.each do |i|
+      printf "%-20s %s\n", i.name, i.value if i.value?
+    end
+  end
+
+  def exec_clean
+    @installer.exec_clean
+  end
+
+  def exec_distclean
+    @installer.exec_distclean
+  end
+
+end   # class ToplevelInstaller
+
+
+class ToplevelInstallerMulti < ToplevelInstaller
+
+  include FileOperations
+
+  def initialize(ardir_root, config)
+    super
+    @packages = directories_of("»«v:#{@ardir}»«s:/packages")
+    raise 'no package exists' if @packages.empty?
+    @root_installer = Installer.new(@config, @ardir, File.expand_path('.'))
+  end
+
+  def run_metaconfigs
+    @config.load_script "»«v:#{@ardir}»«s:/metaconfig", self
+    @packages.each do |name|
+      @config.load_script "»«v:#{@ardir}»«s:/packages/»«v:#{name}»«s:/metaconfig"
+    end
+  end
+
+  attr_reader :packages
+
+  def packages=(list)
+    raise 'package list is empty' if list.empty?
+    list.each do |name|
+      raise "directory packages/»«v:#{name}»«s: does not exist"\
+              unless File.dir?("»«v:#{@ardir}»«s:/packages/»«v:#{name}»«s:")
+    end
+    @packages = list
+  end
+
+  def init_installers
+    @installers = {}
+    @packages.each do |pack|
+      @installers[pack] = Installer.new(@config,
+                                       "»«v:#{@ardir}»«s:/packages/»«v:#{pack}»«s:",
+                                       "packages/»«v:#{pack}»«s:")
+    end
+    with    = extract_selection(config('with'))
+    without = extract_selection(config('without'))
+    @selected = @installers.keys.select {|name|
+                  (with.empty? or with.include?(name)) \
+                      and not without.include?(name)
+                }
+  end
+
+  def extract_selection(list)
+    a = list.split(/,/)
+    a.each do |name|
+      setup_rb_error "no such package: »«v:#{name}»«s:"  unless @installers.key?(name)
+    end
+    a
+  end
+
+  def print_usage(f)
+    super
+    f.puts 'Inluded packages:'
+    f.puts '  ' + @packages.sort.join(' ')
+    f.puts
+  end
+
+  #
+  # Task Handlers
+  #
+
+  def exec_config
+    run_hook 'pre-config'
+    each_selected_installers {|inst| inst.exec_config }
+    run_hook 'post-config'
+    @config.save   # must be final
+  end
+
+  def exec_setup
+    run_hook 'pre-setup'
+    each_selected_installers {|inst| inst.exec_setup }
+    run_hook 'post-setup'
+  end
+
+  def exec_install
+    run_hook 'pre-install'
+    each_selected_installers {|inst| inst.exec_install }
+    run_hook 'post-install'
+  end
+
+  def exec_test
+    run_hook 'pre-test'
+    each_selected_installers {|inst| inst.exec_test }
+    run_hook 'post-test'
+  end
+
+  def exec_clean
+    rm_f @config.savefile
+    run_hook 'pre-clean'
+    each_selected_installers {|inst| inst.exec_clean }
+    run_hook 'post-clean'
+  end
+
+  def exec_distclean
+    rm_f @config.savefile
+    run_hook 'pre-distclean'
+    each_selected_installers {|inst| inst.exec_distclean }
+    run_hook 'post-distclean'
+  end
+
+  #
+  # lib
+  #
+
+  def each_selected_installers
+    Dir.mkdir 'packages' unless File.dir?('packages')
+    @selected.each do |pack|
+      $stderr.puts "Processing the package `»«v:#{pack}»«s:' ..." if verbose?
+      Dir.mkdir "packages/»«v:#{pack}»«s:" unless File.dir?("packages/»«v:#{pack}»«s:")
+      Dir.chdir "packages/»«v:#{pack}»«s:"
+      yield @installers[pack]
+      Dir.chdir '»../..«s:'
+    end
+  end
+
+  def run_hook(id)
+    @root_installer.run_hook id
+  end
+
+  # module FileOperations requires this
+  def verbose?
+    @config.verbose?
+  end
+
+  # module FileOperations requires this
+  def no_harm?
+    @config.no_harm?
+  end
+
+end   # class ToplevelInstallerMulti
+
+
+class Installer
+
+  FILETYPES = %w( bin lib ext data conf man )
+
+  include FileOperations
+  include HookScriptAPI
+
+  def initialize(config, srcroot, objroot)
+    @config = config
+    @srcdir = File.expand_path(srcroot)
+    @objdir = File.expand_path(objroot)
+    @currdir = '».«s:'
+  end
+
+  def inspect
+    "#<»«v:#{self.class}»«s: »«v:#{File.basename(@srcdir)}»«s:>"
+  end
+
+  def noop(rel)
+  end
+
+  #
+  # Hook Script API base methods
+  #
+
+  def srcdir_root
+    @srcdir
+  end
+
+  def objdir_root
+    @objdir
+  end
+
+  def relpath
+    @currdir
+  end
+
+  #
+  # Config Access
+  #
+
+  # module FileOperations requires this
+  def verbose?
+    @config.verbose?
+  end
+
+  # module FileOperations requires this
+  def no_harm?
+    @config.no_harm?
+  end
+
+  def verbose_off
+    begin
+      save, @config.verbose = @config.verbose?, false
+      yield
+    ensure
+      @config.verbose = save
+    end
+  end
+
+  #
+  # TASK config
+  #
+
+  def exec_config
+    exec_task_traverse '»config«s:'
+  end
+
+  alias config_dir_bin noop
+  alias config_dir_lib noop
+
+  def config_dir_ext(rel)
+    extconf if extdir?(curr_srcdir())
+  end
+
+  alias config_dir_data noop
+  alias config_dir_conf noop
+  alias config_dir_man noop
+
+  def extconf
+    ruby "»«v:#{curr_srcdir()}»«s:/extconf.rb", *@config.config_opt
+  end
+
+  #
+  # TASK setup
+  #
+
+  def exec_setup
+    exec_task_traverse '»setup«s:'
+  end
+
+  def setup_dir_bin(rel)
+    files_of(curr_srcdir()).each do |fname|
+      update_shebang_line "»«v:#{curr_srcdir()}»«s:/»«v:#{fname}»«s:"
+    end
+  end
+
+  alias setup_dir_lib noop
+
+  def setup_dir_ext(rel)
+    make if extdir?(curr_srcdir())
+  end
+
+  alias setup_dir_data noop
+  alias setup_dir_conf noop
+  alias setup_dir_man noop
+
+  def update_shebang_line(path)
+    return if no_harm?
+    return if config('»shebang«s:') == '»never«s:'
+    old = Shebang.load(path)
+    if old
+      $stderr.puts "warning: »«v:#{path}»«s:: Shebang line includes too many args.  It is not portable and your program may not work." if old.args.size > 1
+      new = new_shebang(old)
+      return if new.to_s == old.to_s
+    else
+      return unless config('»shebang«s:') == '»all«s:'
+      new = Shebang.new(config('»rubypath«s:'))
+    end
+    $stderr.puts "updating shebang: »«v:#{File.basename(path)}»«s:" if verbose?
+    open_atomic_writer(path) {|output|
+      File.open(path, '»rb«s:') {|f|
+        f.gets if old   # discard
+        output.puts new.to_s
+        output.print f.read
+      }
+    }
+  end
+
+  def new_shebang(old)
+    if /\Aruby/ =~ File.basename(old.cmd)
+      Shebang.new(config('»rubypath«s:'), old.args)
+    elsif File.basename(old.cmd) == '»env«s:' and old.args.first == '»ruby«s:'
+      Shebang.new(config('»rubypath«s:'), old.args[1..-1])
+    else
+      return old unless config('»shebang«s:') == '»all«s:'
+      Shebang.new(config('»rubypath«s:'))
+    end
+  end
+
+  def open_atomic_writer(path, &block)
+    tmpfile = File.basename(path) + '».tmp«s:'
+    begin
+      File.open(tmpfile, '»wb«s:', &block)
+      File.rename tmpfile, File.basename(path)
+    ensure
+      File.unlink tmpfile if File.exist?(tmpfile)
+    end
+  end
+
+  class Shebang
+    def Shebang.load(path)
+      line = nil
+      File.open(path) {|f|
+        line = f.gets
+      }
+      return nil unless /\A#!/ =~ line
+      parse(line)
+    end
+
+    def Shebang.parse(line)
+      cmd, *args = *line.strip.sub(/\A\#!/, '').split('» «s:')
+      new(cmd, args)
+    end
+
+    def initialize(cmd, args = [])
+      @cmd = cmd
+      @args = args
+    end
+
+    attr_reader :cmd
+    attr_reader :args
+
+    def to_s
+      "#! »«v:#{@cmd}»«s:" + (@args.empty? ? '' : " »«v:#{@args.join(' ')}»«s:")
+    end
+  end
+
+  #
+  # TASK install
+  #
+
+  def exec_install
+    rm_f '»«t:InstalledFiles»«s:'
+    exec_task_traverse '»install«s:'
+  end
+
+  def install_dir_bin(rel)
+    install_files targetfiles(), "»«v:#{config('bindir')}»«s:/»«v:#{rel}»«s:", 0755
+  end
+
+  def install_dir_lib(rel)
+    install_files libfiles(), "»«v:#{config('rbdir')}»«s:/»«v:#{rel}»«s:", 0644
+  end
+
+  def install_dir_ext(rel)
+    return unless extdir?(curr_srcdir())
+    install_files rubyextentions('».«s:'),
+                  "»«v:#{config('sodir')}»«s:/»«v:#{File.dirname(rel)}»«s:",
+                  0555
+  end
+
+  def install_dir_data(rel)
+    install_files targetfiles(), "»«v:#{config('datadir')}»«s:/»«v:#{rel}»«s:", 0644
+  end
+
+  def install_dir_conf(rel)
+    # FIXME: should not remove current config files
+    # (rename previous file to .old/.org)
+    install_files targetfiles(), "»«v:#{config('sysconfdir')}»«s:/»«v:#{rel}»«s:", 0644
+  end
+
+  def install_dir_man(rel)
+    install_files targetfiles(), "»«v:#{config('mandir')}»«s:/»«v:#{rel}»«s:", 0644
+  end
+
+  def install_files(list, dest, mode)
+    mkdir_p dest, @config.install_prefix
+    list.each do |fname|
+      install fname, dest, mode, @config.install_prefix
+    end
+  end
+
+  def libfiles
+    glob_reject(%w(*.y *.output), targetfiles())
+  end
+
+  def rubyextentions(dir)
+    ents = glob_select("*.»«v:#{@config.dllext}»«s:", targetfiles())
+    if ents.empty?
+      setup_rb_error "no ruby extention exists: '»ruby «v:#{$0}» setup«s:' first"
+    end
+    ents
+  end
+
+  def targetfiles
+    mapdir(existfiles() - hookfiles())
+  end
+
+  def mapdir(ents)
+    ents.map {|ent|
+      if File.exist?(ent)
+      then ent                         # objdir
+      else "»«v:#{curr_srcdir()}»«s:/»«v:#{ent}»«s:"   # srcdir
+      end
+    }
+  end
+
+  # picked up many entries from cvs-1.11.1/src/ignore.c
+  JUNK_FILES = %w( 
+    core RCSLOG tags TAGS .make.state
+    .nse_depinfo #* .#* cvslog.* ,* .del-* *.olb
+    *~ *.old *.bak *.BAK *.orig *.rej _$* *$
+
+    *.org *.in .*
+  )
+
+  def existfiles
+    glob_reject(JUNK_FILES, (files_of(curr_srcdir()) | files_of('».«s:')))
+  end
+
+  def hookfiles
+    %w( pre-%s post-%s pre-%s.rb post-%s.rb ).map {|fmt|
+      %w( config setup install clean ).map {|t| sprintf(fmt, t) }
+    }.flatten
+  end
+
+  def glob_select(pat, ents)
+    re = globs2re([pat])
+    ents.select {|ent| re =~ ent }
+  end
+
+  def glob_reject(pats, ents)
+    re = globs2re(pats)
+    ents.reject {|ent| re =~ ent }
+  end
+
+  GLOB2REGEX = {
+    '».«s:' => '»\.«s:',
+    '»$«s:' => '»\$«s:',
+    '»«m:#»«x:' => '\#',
+»    «s:'*'» => «s:'.*'»
+  }
+
+  «k:def» «f:globs2re»(pats)
+    /\«t:A»(?:#{
+      pats.map {|pat| pat.gsub(«s:/[\.\$\#\*]/») {|ch| «t:GLOB2REGEX»[ch] } }.join(«s:'|'»)
+    })\z/
+  «k:end»
+
+  «m:#»«x:
+»  «m:# »«x:TASK test
+»  «m:#»«x:
+»
+  «t:TESTDIR» = «s:'test'»
+
+  «k:def» «f:exec_test»
+    «k:unless» «t:File».directory?(«s:'test'»)
+      «v:$stderr».puts «s:'no test in this package'» «k:if» verbose?
+      «k:return»
+    «k:end»
+    «v:$stderr».puts «s:'Running tests...'» «k:if» verbose?
+    «k:begin»
+      require «s:'test/unit'»
+    «k:rescue» «t:LoadError»
+      setup_rb_error «s:'test/unit cannot loaded.  You need Ruby 1.8 or later to invoke this task.'»
+    «k:end»
+    runner = «t:Test»::«t:Unit»::«t:AutoRunner».new(«v:true»)
+    runner.to_run << «t:TESTDIR»
+    runner.run
+  «k:end»
+
+  «m:#»«x:
+»  «m:# »«x:TASK clean
+»  «m:#»«x:
+»
+  «k:def» «f:exec_clean»
+    exec_task_traverse «s:'clean'»
+    rm_f «v:@config».savefile
+    rm_f «s:'InstalledFiles'»
+  «k:end»
+
+  «k:alias» clean_dir_bin noop
+  «k:alias» clean_dir_lib noop
+  «k:alias» clean_dir_data noop
+  «k:alias» clean_dir_conf noop
+  «k:alias» clean_dir_man noop
+
+  «k:def» «f:clean_dir_ext»(rel)
+    «k:return» «k:unless» extdir?(curr_srcdir())
+    make «s:'clean'» «k:if» «t:File».file?(«s:'Makefile'»)
+  «k:end»
+
+  «m:#»«x:
+»  «m:# »«x:TASK distclean
+»  «m:#»«x:
+»
+  «k:def» «f:exec_distclean»
+    exec_task_traverse «s:'distclean'»
+    rm_f «v:@config».savefile
+    rm_f «s:'InstalledFiles'»
+  «k:end»
+
+  «k:alias» distclean_dir_bin noop
+  «k:alias» distclean_dir_lib noop
+
+  «k:def» «f:distclean_dir_ext»(rel)
+    «k:return» «k:unless» extdir?(curr_srcdir())
+    make «s:'distclean'» «k:if» «t:File».file?(«s:'Makefile'»)
+  «k:end»
+
+  «k:alias» distclean_dir_data noop
+  «k:alias» distclean_dir_conf noop
+  «k:alias» distclean_dir_man noop
+
+  «m:#»«x:
+»  «m:# »«x:Traversing
+»  «m:#»«x:
+»
+  «k:def» «f:exec_task_traverse»(task)
+    run_hook «s:"pre-»«v:#{task}»«s:"»
+    «t:FILETYPES».each «k:do» |type|
+      «k:if» type == «s:'ext'» «k:and» config(«s:'without-ext'») == «s:'yes'»
+        «v:$stderr».puts «s:'skipping ext/* by user option'» «k:if» verbose?
+        «k:next»
+      «k:end»
+      traverse task, type, «s:"»«v:#{task}»«s:_dir_»«v:#{type}»«s:"»
+    «k:end»
+    run_hook «s:"post-»«v:#{task}»«s:"»
+  «k:end»
+
+  «k:def» «f:traverse»(task, rel, mid)
+    dive_into(rel) {
+      run_hook «s:"pre-»«v:#{task}»«s:"»
+      __send__ mid, rel.sub(%r[\«t:A».*?(?«c::/»|\z)], «s:''»)
+      directories_of(curr_srcdir()).each «k:do» |d|
+        traverse task, «s:"»«v:#{rel}»«s:/»«v:#{d}»«s:"», mid
+      «k:end»
+      run_hook «s:"post-»«v:#{task}»«s:"»
+    }
+  «k:end»
+
+  «k:def» «f:dive_into»(rel)
+    «k:return» «k:unless» «t:File».dir?(«s:"»«v:#{@srcdir}»«s:/»«v:#{rel}»«s:"»)
+
+    dir = «t:File».basename(rel)
+    «t:Dir».mkdir dir «k:unless» «t:File».dir?(dir)
+    prevdir = «t:Dir».pwd
+    «t:Dir».chdir dir
+    «v:$stderr».puts «s:'---> '» + rel «k:if» verbose?
+    «v:@currdir» = rel
+    «k:yield»
+    «t:Dir».chdir prevdir
+    «v:$stderr».puts «s:'<--- '» + rel «k:if» verbose?
+    «v:@currdir» = «t:File».dirname(rel)
+  «k:end»
+
+  «k:def» «f:run_hook»(id)
+    path = [ «s:"»«v:#{curr_srcdir()}»«s:/»«v:#{id}»«s:"»,
+             «s:"»«v:#{curr_srcdir()}»«s:/»«v:#{id}»«s:.rb"» ].detect {|cand| «t:File».file?(cand) }
+    «k:return» «k:unless» path
+    «k:begin»
+      instance_eval «t:File».read(path), path, 1
+    «k:rescue»
+      «k:raise» «k:if» «v:$DEBUG»
+      setup_rb_error «s:"hook »«v:#{path}»«s: failed:\n"» + «v:$!».message
+    «k:end»
+  «k:end»
+
+«k:end»   «m:# »«x:class Installer
+»
+
+«k:class» «t:SetupError» < «t:StandardError»; «k:end»
+
+«k:def» «f:setup_rb_error»(msg)
+  «k:raise» «t:SetupError», msg
+«k:end»
+
+«k:if» «v:$0» == __FILE__
+  «k:begin»
+    «t:ToplevelInstaller».invoke
+  «k:rescue» «t:SetupError»
+    «k:raise» «k:if» «v:$DEBUG»
+    «v:$stderr».puts «v:$!».message
+    «v:$stderr».puts «s:"Try 'ruby »«v:#{$0}»«s: --help' for detailed usage."»
+    exit 1
+  «k:end»
+«k:end»

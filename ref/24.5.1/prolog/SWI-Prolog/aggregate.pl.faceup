@@ -1,0 +1,635 @@
+«m:/*  »«x:Part of SWI-Prolog
+
+    Author:        Jan Wielemaker
+    E-mail:        J.Wielemaker@vu.nl
+    WWW:           http://www.swi-prolog.org
+    Copyright (C): 2008-2014, University of Amsterdam
+			      VU University Amsterdam
+
+    This program is free software; you can redistribute it and/or
+    modify it under the terms of the GNU General Public License
+    as published by the Free Software Foundation; either version 2
+    of the License, or (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public
+    License along with this library; if not, write to the Free Software
+    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+
+    As a special exception, if you link this library with other files,
+    compiled with a Free Software compiler, to produce an executable, this
+    library does not by itself cause the resulting executable to be covered
+    by the GNU General Public License. This exception does not however
+    invalidate any other reasons why the executable file might be covered by
+    the GNU General Public License.
+*/»
+
+:- «b:module»(aggregate,
+	  «k:[» «f:foreach/2»,			«x:% :Generator, :Goal
+»	    «f:aggregate/3»,		«x:% +Templ, :Goal, -Result
+»	    «f:aggregate/4»,		«x:% +Templ, +Discrim, :Goal, -Result
+»	    «f:aggregate_all/3»,		«x:% +Templ, :Goal, -Result
+»	    «f:aggregate_all/4»,		«x:% +Templ, +Discrim, :Goal, -Result
+»	    «f:free_variables/4»		«x:% :Generator, :Template, +Vars0, -Vars
+»	  «k:]»).
+:- use_module(library(ordsets)).
+:- use_module(library(pairs)).
+:- use_module(library(error)).
+:- use_module(library(lists)).
+:- use_module(library(apply)).
+
+:- meta_predicate
+	foreach(0,0),
+	aggregate(?,^,-),
+	aggregate(?,?,^,-),
+	aggregate_all(?,0,-),
+	aggregate_all(?,?,0,-).
+
+«m:/** »«x:<module> Aggregation operators on backtrackable predicates
+
+This library provides aggregating operators  over   the  solutions  of a
+predicate. The operations are a generalisation   of the «f:bagof/3», «f:setof/3»
+and «f:findall/3» built-in predicates. The   defined  aggregation operations
+are counting, computing the sum, minimum,   maximum,  a bag of solutions
+and a set of solutions. We first   give  a simple example, computing the
+country with the smallest area:
+
+==
+smallest_country(Name, Area) :-
+	aggregate(min(A, N), country(N, A), min(Area, Name)).
+==
+
+There are four aggregation predicates («f:aggregate/3», «f:aggregate/4», «f:aggregate_all/3» and «f:aggregate/4»), distinguished on two properties.
+
+    $ aggregate vs. aggregate_all :
+    The aggregate predicates use «f:setof/3» («f:aggregate/4») or «f:bagof/3»
+    («f:aggregate/3»), dealing with existential qualified variables
+    (Var^Goal) and providing multiple solutions for the remaining free
+    variables in Goal. The «f:aggregate_all/3» predicate uses «f:findall/3»,
+    implicitly qualifying all free variables and providing exactly one
+    solution, while «f:aggregate_all/4» uses «f:sort/2» over solutions that
+    Discriminator (see below) generated using «f:findall/3».
+
+    $ The Discriminator argument :
+    The versions with 4 arguments deduplicate redundant solutions of
+    Goal. Solutions for which both the template variables and
+    Discriminator are identical will be treated as one solution. For
+    example, if we wish to compute the total population of all
+    countries, and for some reason =|country(belgium, 11000000)|= may
+    succeed twice, we can use the following to avoid counting the
+    population of Belgium twice:
+
+    ==
+	aggregate(sum(P), Name, country(Name, P), Total)
+    ==
+
+All aggregation predicates support  the   following  operators  below in
+Template. In addition, they allow for  an arbitrary named compound term,
+where each of the arguments is a term  from the list below. For example,
+the term r(min(X), max(X)) computes both the minimum and maximum binding
+for X.
+
+	* count
+	Count number of solutions.  Same as sum(1).
+	* sum(Expr)
+	Sum of Expr for all solutions.
+	* min(Expr)
+	Minimum of Expr for all solutions.
+	* min(Expr, Witness)
+	A term min(Min, Witness), where Min is the minimal version
+	of Expr over all solutions, and Witness is any other template
+	applied to solutions that produced Min.  If multiple
+	solutions provide the same minimum, Witness corresponds to
+	the first solution.
+	* max(Expr)
+	Maximum of Expr for all solutions.
+	* max(Expr, Witness)
+	As min(Expr, Witness), but producing the maximum result.
+	* set(X)
+	An ordered set with all solutions for X.
+	* bag(X)
+	A list of all solutions for X.
+
+*Acknowledgements*
+
+_|The development of this library was sponsored by SecuritEase,
+  http://www.securitease.com
+|_
+
+@compat Quintus, SICStus 4. The «f:forall/2» is a SWI-Prolog built-in and
+	«f:term_variables/3» is a SWI-Prolog with a *|different definition|*.
+@tbd	Analysing the aggregation template and compiling a predicate
+	for the list aggregation can be done at compile time.
+@tbd	«f:aggregate_all/3» can be rewritten to run in constant space using
+	non-backtrackable assignment on a term.
+*/»
+
+		 «m:/*******************************»«x:
+		 *	     AGGREGATE		*
+		 *******************************/»
+
+«m:%%»«x:	aggregate(+Template, :Goal, -Result) is nondet.
+%
+%	Aggregate bindings in Goal according to Template.  The «f:aggregate/3»
+%	version performs «f:bagof/3» on Goal.
+»
+«f:aggregate»(«v:Template», «v:Goal0», «v:Result») :-
+	template_to_pattern(bag, «v:Template», «v:Pattern», «v:Goal0», «v:Goal», «v:Aggregate»),
+	bagof(«v:Pattern», «v:Goal», «v:List»),
+	aggregate_list(«v:Aggregate», «v:List», «v:Result»).
+
+«m:%%»«x:	aggregate(+Template, +Discriminator, :Goal, -Result) is nondet.
+%
+%	Aggregate bindings in Goal according to Template.  The «f:aggregate/4»
+%	version performs «f:setof/3» on Goal.
+»
+«f:aggregate»(«v:Template», «v:Discriminator», «v:Goal0», «v:Result») :-
+	template_to_pattern(bag, «v:Template», «v:Pattern», «v:Goal0», «v:Goal», «v:Aggregate»),
+	setof(«v:Discriminator»-«v:Pattern», «v:Goal», «v:Pairs»),
+	pairs_values(«v:Pairs», «v:List»),
+	aggregate_list(«v:Aggregate», «v:List», «v:Result»).
+
+«m:%%»«x:	aggregate_all(+Template, :Goal, -Result) is semidet.
+%
+%	Aggregate  bindings  in  Goal   according    to   Template.  The
+%	«f:aggregate_all/3» version performs «f:findall/3» on   Goal.  Note that
+%	this predicate fails if Template contains one or more of min(X),
+%	max(X),  min(X,Witness)  or  max(X,Witness)  and   Goal  has  no
+%	solutions, i.e., the minumum and  maximum   of  an  empty set is
+%	undefined.
+»
+«f:aggregate_all»(«v:Var», «v:_», «v:_») :-
+	var(«v:Var»), «k:!»,
+	instantiation_error(«v:Var»).
+«f:aggregate_all»(count, «v:Goal», «v:Count») :- «k:!»,
+	aggregate_all(sum(1), «v:Goal», «v:Count»).
+«f:aggregate_all»(sum(«v:X»), «v:Goal», «v:Sum») :- «k:!»,
+	«v:State» = state(0),
+	(  call(«v:Goal»),
+	   arg(1, «v:State», «v:S0»),
+	   «v:S» is «v:S0» + «v:X»,
+	   nb_setarg(1, «v:State», «v:S»),
+	   fail
+	«k:;»  arg(1, «v:State», «v:Sum»)
+	).
+«f:aggregate_all»(max(«v:X»), «v:Goal», «v:Max») :- «k:!»,
+	«v:State» = state(«v:X»),
+	(  call(«v:Goal»),
+	   arg(1, «v:State», «v:M0»),
+	   «v:M» is max(«v:M0»,«v:X»),
+	   nb_setarg(1, «v:State», «v:M»),
+	   fail
+	«k:;»  arg(1, «v:State», «v:Max»),
+	   nonvar(«v:Max»)
+	).
+«f:aggregate_all»(min(«v:X»), «v:Goal», «v:Min») :- «k:!»,
+	«v:State» = state(«v:X»),
+	(  call(«v:Goal»),
+	   arg(1, «v:State», «v:M0»),
+	   «v:M» is min(«v:M0»,«v:X»),
+	   nb_setarg(1, «v:State», «v:M»),
+	   fail
+	«k:;»  arg(1, «v:State», «v:Min»),
+	   nonvar(«v:Min»)
+	).
+«f:aggregate_all»(max(«v:X»,«v:W»), «v:Goal», max(«v:Max»,«v:Witness»)) :- «k:!»,
+	«v:State» = state(false, «v:_Max», «v:_Witness»),
+	(  call(«v:Goal»),
+	   (   «v:State» = state(true, «v:Max0», «v:_»)
+	   «k:->»  «v:X» > «v:Max0»,
+	       nb_setarg(2, «v:State», «v:X»),
+	       nb_setarg(3, «v:State», «v:W»)
+	   «k:;»   number(«v:X»)
+	   «k:->»  nb_setarg(1, «v:State», true),
+	       nb_setarg(2, «v:State», «v:X»),
+	       nb_setarg(3, «v:State», «v:W»)
+	   «k:;»   type_error(number, «v:X»)
+	   ),
+	   fail
+	«k:;»  «v:State» = state(true, «v:Max», «v:Witness»)
+	).
+«f:aggregate_all»(min(«v:X»,«v:W»), «v:Goal», min(«v:Min»,«v:Witness»)) :- «k:!»,
+	«v:State» = state(false, «v:_Min», «v:_Witness»),
+	(  call(«v:Goal»),
+	   (   «v:State» = state(true, «v:Min0», «v:_»)
+	   «k:->»  «v:X» < «v:Min0»,
+	       nb_setarg(2, «v:State», «v:X»),
+	       nb_setarg(3, «v:State», «v:W»)
+	   «k:;»   number(«v:X»)
+	   «k:->»  nb_setarg(1, «v:State», true),
+	       nb_setarg(2, «v:State», «v:X»),
+	       nb_setarg(3, «v:State», «v:W»)
+	   «k:;»   type_error(number, «v:X»)
+	   ),
+	   fail
+	«k:;»  «v:State» = state(true, «v:Min», «v:Witness»)
+	).
+«f:aggregate_all»(«v:Template», «v:Goal0», «v:Result») :-
+	template_to_pattern(all, «v:Template», «v:Pattern», «v:Goal0», «v:Goal», «v:Aggregate»),
+	findall(«v:Pattern», «v:Goal», «v:List»),
+	aggregate_list(«v:Aggregate», «v:List», «v:Result»).
+
+«m:%%»«x:	aggregate_all(+Template, +Discriminator, :Goal, -Result) is semidet.
+%
+%	Aggregate  bindings  in  Goal   according    to   Template.  The
+%	«f:aggregate_all/4» version performs «f:findall/3» followed by «f:sort/2» on
+%	Goal. See «f:aggregate_all/3» to understand   why this predicate can
+%	fail.
+»
+«f:aggregate_all»(«v:Template», «v:Discriminator», «v:Goal0», «v:Result») :-
+	template_to_pattern(all, «v:Template», «v:Pattern», «v:Goal0», «v:Goal», «v:Aggregate»),
+	findall(«v:Discriminator»-«v:Pattern», «v:Goal», «v:Pairs0»),
+	sort(«v:Pairs0», «v:Pairs»),
+	pairs_values(«v:Pairs», «v:List»),
+	aggregate_list(«v:Aggregate», «v:List», «v:Result»).
+
+«f:template_to_pattern»(«v:All», «v:Template», «v:Pattern», «v:Goal0», «v:Goal», «v:Aggregate») :-
+	template_to_pattern(«v:Template», «v:Pattern», «v:Post», «v:Vars», «v:Aggregate»),
+	existential_vars(«v:Goal0», «v:Goal1», «v:AllVars», «v:Vars»),
+	clean_body((«v:Goal1», «v:Post»), «v:Goal2»),
+	(   «v:All» == bag
+	«k:->»  add_existential_vars(«v:AllVars», «v:Goal2», «v:Goal»)
+	«k:;»   «v:Goal» = «v:Goal2»
+	).
+
+«f:existential_vars»(«v:Var», «v:Var») -->
+	«k:{» var(«v:Var») «k:}», «k:!».
+«f:existential_vars»(«v:Var»^«v:G0», «v:G») --> «k:!»,
+	«k:[»«v:Var»«k:]»,
+	existential_vars(«v:G0», «v:G»).
+«f:existential_vars»(«v:M»:«v:G0», «v:M»:«v:G») --> «k:!»,
+	existential_vars(«v:G0», «v:G»).
+«f:existential_vars»(«v:G», «v:G») -->
+	«k:[]».
+
+«f:add_existential_vars»(«k:[]», «v:G», «v:G»).
+«f:add_existential_vars»(«k:[»«v:H»«k:|»«v:T»«k:]», «v:G0», «v:H»^«v:G1») :-
+	add_existential_vars(«v:T», «v:G0», «v:G1»).
+
+
+«m:%%»«x:	clean_body(+Goal0, -Goal) is det.
+%
+%	Remove redundant =true= from Goal0.
+»
+«f:clean_body»((«v:Goal0»,«v:Goal1»), «v:Goal») :- «k:!»,
+	clean_body(«v:Goal0», «v:GoalA»),
+	clean_body(«v:Goal1», «v:GoalB»),
+	(   «v:GoalA» == true
+	«k:->»  «v:Goal» = «v:GoalB»
+	«k:;»   «v:GoalB» == true
+	«k:->»  «v:Goal» = «v:GoalA»
+	«k:;»   «v:Goal» = («v:GoalA»,«v:GoalB»)
+	).
+«f:clean_body»(«v:Goal», «v:Goal»).
+
+
+«m:%%»«x:	template_to_pattern(+Template, -Pattern, -Post, -Vars, -Aggregate)
+%
+%	Determine which parts of the goal we must remember in the
+%	«f:findall/3» pattern.
+%
+%	@param Post is a body-term that evaluates expressions to reduce
+%		    storage requirements.
+%	@param Vars is a list of intermediate variables that must be
+%		    added to the existential variables for «f:bagof/3».
+%	@param Aggregate defines the aggregation operation to execute.
+»
+«f:template_to_pattern»(sum(«v:X»),	      «v:X»,	 true,	  «k:[]»,   sum) :- var(«v:X»), «k:!».
+«f:template_to_pattern»(sum(«v:X0»),	      «v:X»,	 «v:X» is «v:X0», «k:[»«v:X0»«k:]», sum) :- «k:!».
+«f:template_to_pattern»(count,	      1,	 true,    «k:[]»,   count) :- «k:!».
+«f:template_to_pattern»(min(«v:X»),	      «v:X»,	 true,    «k:[]»,   min) :- var(«v:X»), «k:!».
+«f:template_to_pattern»(min(«v:X0»),	      «v:X»,	 «v:X» is «v:X0», «k:[»«v:X0»«k:]», min) :- «k:!».
+«f:template_to_pattern»(min(«v:X0», «v:Witness»), «v:X»-«v:Witness», «v:X» is «v:X0», «k:[»«v:X0»«k:]», min_witness) :- «k:!».
+«f:template_to_pattern»(max(«v:X0»),	      «v:X»,	 «v:X» is «v:X0», «k:[»«v:X0»«k:]», max) :- «k:!».
+«f:template_to_pattern»(max(«v:X0», «v:Witness»), «v:X»-«v:Witness», «v:X» is «v:X0», «k:[»«v:X0»«k:]», max_witness) :- «k:!».
+«f:template_to_pattern»(set(«v:X»),	      «v:X»,	 true,    «k:[]»,   set) :- «k:!».
+«f:template_to_pattern»(bag(«v:X»),	      «v:X»,	 true,    «k:[]»,   bag) :- «k:!».
+«f:template_to_pattern»(«v:Term», «v:Pattern», «v:Goal», «v:Vars», term(«v:MinNeeded», «v:Functor», «v:AggregateArgs»)) :-
+	compound(«v:Term»), «k:!»,
+	«v:Term» =.. «k:[»«v:Functor»«k:|»«v:Args0»«k:]»,
+	templates_to_patterns(«v:Args0», «v:Args», «v:Goal», «v:Vars», «v:AggregateArgs»),
+	needs_one(«v:AggregateArgs», «v:MinNeeded»),
+	«v:Pattern» =.. «k:[»«v:Functor»«k:|»«v:Args»«k:]».
+«f:template_to_pattern»(«v:Term», «v:_», «v:_», «v:_», «v:_») :-
+	type_error(aggregate_template, «v:Term»).
+
+«f:templates_to_patterns»(«k:[]», «k:[]», true, «k:[]», «k:[]»).
+«f:templates_to_patterns»(«k:[»«v:H0»«k:]», «k:[»«v:H»«k:]», «v:G», «v:Vars», «k:[»«v:A»«k:]») :- «k:!»,
+	template_to_pattern(«v:H0», «v:H», «v:G», «v:Vars», «v:A»).
+«f:templates_to_patterns»(«k:[»«v:H0»«k:|»«v:T0»«k:]», «k:[»«v:H»«k:|»«v:T»«k:]», («v:G0»,«v:G»), «v:Vars», «k:[»«v:A0»«k:|»«v:A»«k:]») :-
+	template_to_pattern(«v:H0», «v:H», «v:G0», «v:V0», «v:A0»),
+	append(«v:V0», «v:RV», «v:Vars»),
+	templates_to_patterns(«v:T0», «v:T», «v:G», «v:RV», «v:A»).
+
+«m:%%»«x:	needs_one(+Ops, -OneOrZero)
+%
+%	If one of the operations in Ops needs at least one answer,
+%	unify OneOrZero to 1.  Else 0.
+»
+«f:needs_one»(«v:Ops», 1) :-
+	member(«v:Op», «v:Ops»),
+	needs_one(«v:Op»), «k:!».
+«f:needs_one»(«v:_», 0).
+
+«f:needs_one»(min).
+«f:needs_one»(min_witness).
+«f:needs_one»(max).
+«f:needs_one»(max_witness).
+
+«m:%%»«x:	aggregate_list(+Op, +List, -Answer) is semidet.
+%
+%	Aggregate the answer  from  the   list  produced  by  «f:findall/3»,
+%	«f:bagof/3» or «f:setof/3». The latter  two   cases  deal  with compound
+%	answers.
+%
+%	@tbd	Compile code for incremental state update, which we will use
+%		for «f:aggregate_all/3» as well.  We should be using goal_expansion
+%		to generate these clauses.
+»
+«f:aggregate_list»(bag, «v:List0», «v:List») :- «k:!»,
+	«v:List» = «v:List0».
+«f:aggregate_list»(set, «v:List», «v:Set») :- «k:!»,
+	sort(«v:List», «v:Set»).
+«f:aggregate_list»(sum, «v:List», «v:Sum») :-
+	sum_list(«v:List», «v:Sum»).
+«f:aggregate_list»(count, «v:List», «v:Count») :-
+	length(«v:List», «v:Count»).
+«f:aggregate_list»(max, «v:List», «v:Sum») :-
+	max_list(«v:List», «v:Sum»).
+«f:aggregate_list»(max_witness, «v:List», max(«v:Max», «v:Witness»)) :-
+	max_pair(«v:List», «v:Max», «v:Witness»).
+«f:aggregate_list»(min, «v:List», «v:Sum») :-
+	min_list(«v:List», «v:Sum»).
+«f:aggregate_list»(min_witness, «v:List», min(«v:Min», «v:Witness»)) :-
+	min_pair(«v:List», «v:Min», «v:Witness»).
+«f:aggregate_list»(term(0, «v:Functor», «v:Ops»), «v:List», «v:Result») :- «k:!»,
+	maplist(state0, «v:Ops», «v:StateArgs», «v:FinishArgs»),
+	«v:State0» =.. «k:[»«v:Functor»«k:|»«v:StateArgs»«k:]»,
+	aggregate_term_list(«v:List», «v:Ops», «v:State0», «v:Result0»),
+	finish_result(«v:Ops», «v:FinishArgs», «v:Result0», «v:Result»).
+«f:aggregate_list»(term(1, «v:Functor», «v:Ops»), «k:[»«v:H»«k:|»«v:List»«k:]», «v:Result») :-
+	«v:H» =.. «k:[»«v:Functor»«k:|»«v:Args»«k:]»,
+	maplist(state1, «v:Ops», «v:Args», «v:StateArgs», «v:FinishArgs»),
+	«v:State0» =.. «k:[»«v:Functor»«k:|»«v:StateArgs»«k:]»,
+	aggregate_term_list(«v:List», «v:Ops», «v:State0», «v:Result0»),
+	finish_result(«v:Ops», «v:FinishArgs», «v:Result0», «v:Result»).
+
+«f:aggregate_term_list»(«k:[]», «v:_», «v:State», «v:State»).
+«f:aggregate_term_list»(«k:[»«v:H»«k:|»«v:T»«k:]», «v:Ops», «v:State0», «v:State») :-
+	step_term(«v:Ops», «v:H», «v:State0», «v:State1»),
+	aggregate_term_list(«v:T», «v:Ops», «v:State1», «v:State»).
+
+
+«m:%%»«x:	min_pair(+Pairs, -Key, -Value) is det.
+»«m:%%»«x:	max_pair(+Pairs, -Key, -Value) is det.
+%
+%	True if Key-Value has the  smallest/largest   key  in  Pairs. If
+%	multiple pairs share the smallest/largest key, the first pair is
+%	returned.
+»
+«f:min_pair»(«k:[»«v:M0»-«v:W0»«k:|»«v:T»«k:]», «v:M», «v:W») :-
+	min_pair(«v:T», «v:M0», «v:W0», «v:M», «v:W»).
+
+«f:min_pair»(«k:[]», «v:M», «v:W», «v:M», «v:W»).
+«f:min_pair»(«k:[»«v:M0»-«v:W0»«k:|»«v:T»«k:]», «v:M1», «v:W1», «v:M», «v:W») :-
+	(   «v:M0» < «v:M1»
+	«k:->»  min_pair(«v:T», «v:M0», «v:W0», «v:M», «v:W»)
+	«k:;»   min_pair(«v:T», «v:M1», «v:W1», «v:M», «v:W»)
+	).
+
+«f:max_pair»(«k:[»«v:M0»-«v:W0»«k:|»«v:T»«k:]», «v:M», «v:W») :-
+	max_pair(«v:T», «v:M0», «v:W0», «v:M», «v:W»).
+
+«f:max_pair»(«k:[]», «v:M», «v:W», «v:M», «v:W»).
+«f:max_pair»(«k:[»«v:M0»-«v:W0»«k:|»«v:T»«k:]», «v:M1», «v:W1», «v:M», «v:W») :-
+	(   «v:M0» > «v:M1»
+	«k:->»  max_pair(«v:T», «v:M0», «v:W0», «v:M», «v:W»)
+	«k:;»   max_pair(«v:T», «v:M1», «v:W1», «v:M», «v:W»)
+	).
+
+«m:%%»«x:	step(+AggregateAction, +New, +State0, -State1).
+»
+«f:step»(bag,   «v:X», «k:[»«v:X»«k:|»«v:L»«k:]», «v:L»).
+«f:step»(set,   «v:X», «k:[»«v:X»«k:|»«v:L»«k:]», «v:L»).
+«f:step»(count, «v:_», «v:X0», «v:X1») :-
+	succ(«v:X0», «v:X1»).
+«f:step»(sum,   «v:X», «v:X0», «v:X1») :-
+	«v:X1» is «v:X0»+«v:X».
+«f:step»(max,   «v:X», «v:X0», «v:X1») :-
+	«v:X1» is max(«v:X0», «v:X»).
+«f:step»(min,   «v:X», «v:X0», «v:X1») :-
+	«v:X1» is min(«v:X0», «v:X»).
+«f:step»(max_witness, «v:X»-«v:W», «v:X0»-«v:W0», «v:X1»-«v:W1») :-
+	(   «v:X» > «v:X0»
+	«k:->»  «v:X1» = «v:X», «v:W1» = «v:W»
+	«k:;»   «v:X1» = «v:X0», «v:W1» = «v:W0»
+	).
+«f:step»(min_witness, «v:X»-«v:W», «v:X0»-«v:W0», «v:X1»-«v:W1») :-
+	(   «v:X» < «v:X0»
+	«k:->»  «v:X1» = «v:X», «v:W1» = «v:W»
+	«k:;»   «v:X1» = «v:X0», «v:W1» = «v:W0»
+	).
+«f:step»(term(«v:Ops»), «v:Row», «v:Row0», «v:Row1») :-
+	step_term(«v:Ops», «v:Row», «v:Row0», «v:Row1»).
+
+«f:step_term»(«v:Ops», «v:Row», «v:Row0», «v:Row1») :-
+	functor(«v:Row», «v:Name», «v:Arity»),
+	functor(«v:Row1», «v:Name», «v:Arity»),
+	step_list(«v:Ops», 1, «v:Row», «v:Row0», «v:Row1»).
+
+«f:step_list»(«k:[]», «v:_», «v:_», «v:_», «v:_»).
+«f:step_list»(«k:[»«v:Op»«k:|»«v:OpT»«k:]», «v:Arg», «v:Row», «v:Row0», «v:Row1») :-
+	arg(«v:Arg», «v:Row», «v:X»),
+	arg(«v:Arg», «v:Row0», «v:X0»),
+	arg(«v:Arg», «v:Row1», «v:X1»),
+	step(«v:Op», «v:X», «v:X0», «v:X1»),
+	succ(«v:Arg», «v:Arg1»),
+	step_list(«v:OpT», «v:Arg1», «v:Row», «v:Row0», «v:Row1»).
+
+«f:finish_result»(«v:Ops», «v:Finish», «v:R0», «v:R») :-
+	functor(«v:R0», «v:Functor», «v:Arity»),
+	functor(«v:R», «v:Functor», «v:Arity»),
+	finish_result(«v:Ops», «v:Finish», 1, «v:R0», «v:R»).
+
+«f:finish_result»(«k:[]», «v:_», «v:_», «v:_», «v:_»).
+«f:finish_result»(«k:[»«v:Op»«k:|»«v:OpT»«k:]», «k:[»«v:F»«k:|»«v:FT»«k:]», «v:I», «v:R0», «v:R») :-
+	arg(«v:I», «v:R0», «v:A0»),
+	arg(«v:I», «v:R», «v:A»),
+	finish_result1(«v:Op», «v:F», «v:A0», «v:A»),
+	succ(«v:I», «v:I2»),
+	finish_result(«v:OpT», «v:FT», «v:I2», «v:R0», «v:R»).
+
+«f:finish_result1»(bag, «v:Bag0», «k:[]», «v:Bag») :- «k:!»,
+	«v:Bag» = «v:Bag0».
+«f:finish_result1»(set, «v:Bag»,  «k:[]», «v:Set») :- «k:!»,
+	sort(«v:Bag», «v:Set»).
+«f:finish_result1»(max_witness, «v:_», «v:M»-«v:W», «v:R») :- «k:!»,
+	«v:R» = max(«v:M»,«v:W»).
+«f:finish_result1»(min_witness, «v:_», «v:M»-«v:W», «v:R») :- «k:!»,
+	«v:R» = min(«v:M»,«v:W»).
+«f:finish_result1»(«v:_», «v:_», «v:A», «v:A»).
+
+«m:%%»«x:	state0(+Op, -State, -Finish)
+»
+«f:state0»(bag,   «v:L», «v:L»).
+«f:state0»(set,   «v:L», «v:L»).
+«f:state0»(count, 0, «v:_»).
+«f:state0»(sum,   0, «v:_»).
+
+«m:%%»«x:	state1(+Op, +First, -State, -Finish)
+»
+«f:state1»(bag, «v:X», «v:L», «k:[»«v:X»«k:|»«v:L»«k:]») :- «k:!».
+«f:state1»(set, «v:X», «v:L», «k:[»«v:X»«k:|»«v:L»«k:]») :- «k:!».
+«f:state1»(«v:_»,   «v:X», «v:X», «v:_»).
+
+
+		 «m:/*******************************»«x:
+		 *	       FOREACH		*
+		 *******************************/»
+
+«m:%%»«x:	foreach(:Generator, :Goal)
+%
+%	True if conjunction of results is   true. Unlike «f:forall/2», which
+%	runs a failure-driven loop that proves Goal for each solution of
+%	Generator, «f:foreach/2» creates a conjunction.   Each member of the
+%	conjunction is a copy of  Goal,   where  the variables it shares
+%	with Generator are filled with the values from the corresponding
+%	solution.
+%
+%	The implementation executes «f:forall/2» if   Goal  does not contain
+%	any variables that are not shared with Generator.
+%
+%	Here is an example:
+%
+%	==
+%	?- foreach(between(1,4,X), dif(X,Y)), Y = 5.
+%	Y = 5.
+%	?- foreach(between(1,4,X), dif(X,Y)), Y = 3.
+%	false.
+%	==
+%
+%	@bug	Goal is copied repeatedly, which may cause problems if
+%		attributed variables are involved.
+»
+«f:foreach»(«v:Generator», «v:Goal») :-
+	term_variables(«v:Generator», «v:GenVars0»), sort(«v:GenVars0», «v:GenVars»),
+	term_variables(«v:Goal», «v:GoalVars0»), sort(«v:GoalVars0», «v:GoalVars»),
+	ord_subtract(«v:GoalVars», «v:GenVars», «v:SharedGoalVars»),
+	(   «v:SharedGoalVars» == «k:[]»
+	«k:->»  \+ («v:Generator», \+«v:Goal»)	«x:% = forall(Generator, Goal)
+»	«k:;»   ord_intersection(«v:GenVars», «v:GoalVars», «v:SharedVars»),
+	    «v:Templ» =.. «k:[»v«k:|»«v:SharedVars»«k:]»,
+	    «v:SharedTempl» =.. «k:[»v«k:|»«v:SharedGoalVars»«k:]»,
+	    findall(«v:Templ», «v:Generator», «v:List»),
+	    prove_list(«v:List», «v:Templ», «v:SharedTempl», «v:Goal»)
+	).
+
+«f:prove_list»(«k:[]», «v:_», «v:_», «v:_»).
+«f:prove_list»(«k:[»«v:H»«k:|»«v:T»«k:]», «v:Templ», «v:SharedTempl», «v:Goal») :-
+	copy_term(«v:Templ»+«v:SharedTempl»+«v:Goal»,
+		  «v:H»+«v:SharedTempl»+«v:Copy»),
+	«v:Copy»,
+	prove_list(«v:T», «v:Templ», «v:SharedTempl», «v:Goal»).
+
+
+«m:%%»«x:	free_variables(:Generator, +Template, +VarList0, -VarList) is det.
+%
+%	Find free variables in bagof/setof template.  In order to handle
+%	variables  properly,  we  have  to   find  all  the  universally
+%	quantified variables in the  Generator.   All  variables  as yet
+%	unbound are universally quantified, unless
+%
+%	    1. they occur in the template
+%	    2. they are bound by X^P, «f:setof/3», or «f:bagof/3»
+%
+%	free_variables(Generator, Template, OldList, NewList) finds this
+%	set using OldList as an accumulator.
+%
+%	@author Richard O'Keefe
+%	@author Jan Wielemaker (made some SWI-Prolog enhancements)
+%	@license Public domain (from DEC10 library).
+%	@tbd Distinguish between control-structures and data terms.
+%	@tbd Exploit our built-in «f:term_variables/2» at some places?
+»
+«f:free_variables»(«v:Term», «v:Bound», «v:VarList», «k:[»«v:Term»«k:|»«v:VarList»«k:]») :-
+	var(«v:Term»),
+	term_is_free_of(«v:Bound», «v:Term»),
+	list_is_free_of(«v:VarList», «v:Term»), «k:!».
+«f:free_variables»(«v:Term», «v:_Bound», «v:VarList», «v:VarList») :-
+	var(«v:Term»), «k:!».
+«f:free_variables»(«v:Term», «v:Bound», «v:OldList», «v:NewList») :-
+	explicit_binding(«v:Term», «v:Bound», «v:NewTerm», «v:NewBound»), «k:!»,
+	free_variables(«v:NewTerm», «v:NewBound», «v:OldList», «v:NewList»).
+«f:free_variables»(«v:Term», «v:Bound», «v:OldList», «v:NewList») :-
+	functor(«v:Term», «v:_», «v:N»),
+	free_variables(«v:N», «v:Term», «v:Bound», «v:OldList», «v:NewList»).
+
+«f:free_variables»(0, «v:_», «v:_», «v:VarList», «v:VarList») :- «k:!».
+«f:free_variables»(«v:N», «v:Term», «v:Bound», «v:OldList», «v:NewList») :-
+	arg(«v:N», «v:Term», «v:Argument»),
+	free_variables(«v:Argument», «v:Bound», «v:OldList», «v:MidList»),
+	«v:M» is «v:N»-1, «k:!»,
+	free_variables(«v:M», «v:Term», «v:Bound», «v:MidList», «v:NewList»).
+
+«x:%   explicit_binding checks for goals known to existentially quantify
+%   one or more variables.  In particular \+ is quite common.
+»
+«f:explicit_binding»(\+ «v:_Goal»,	       «v:Bound», fail,	«v:Bound»      ) :- «k:!».
+«f:explicit_binding»(not(«v:_Goal»),	       «v:Bound», fail,	«v:Bound»	   ) :- «k:!».
+«f:explicit_binding»(«v:Var»^«v:Goal»,	       «v:Bound», «v:Goal»,	«v:Bound»+«v:Var») :- «k:!».
+«f:explicit_binding»(setof(«v:Var»,«v:Goal»,«v:Set»),  «v:Bound», «v:Goal»-«v:Set», «v:Bound»+«v:Var») :- «k:!».
+«f:explicit_binding»(bagof(«v:Var»,«v:Goal»,«v:Bag»),  «v:Bound», «v:Goal»-«v:Bag», «v:Bound»+«v:Var») :- «k:!».
+
+«m:%%»«x:	term_is_free_of(+Term, +Var) is semidet.
+%
+%	True if Var does not appear  in   Term.  This has been rewritten
+%	from the DEC10 library source   to exploit our non-deterministic
+%	«f:arg/3».
+»
+«f:term_is_free_of»(«v:Term», «v:Var») :-
+	\+ var_in_term(«v:Term», «v:Var»).
+
+«f:var_in_term»(«v:Term», «v:Var») :-
+	«v:Var» == «v:Term», «k:!».
+«f:var_in_term»(«v:Term», «v:Var») :-
+	compound(«v:Term»),
+	arg(«v:_», «v:Term», «v:Arg»),
+	var_in_term(«v:Arg», «v:Var»), «k:!».
+
+
+«m:%%»«x:	list_is_free_of(+List, +Var) is semidet.
+%
+%	True if Var is not in List.
+»
+«f:list_is_free_of»(«k:[»«v:Head»«k:|»«v:Tail»«k:]», «v:Var») :-
+	«v:Head» \== «v:Var», «k:!»,
+	list_is_free_of(«v:Tail», «v:Var»).
+«f:list_is_free_of»(«k:[]», «v:_»).
+
+
+«x:%	term_variables(+Term, +Vars0, -Vars) is det.
+%
+%	True if Vars is the union of variables in Term and Vars0.
+%	We cannot have this as «f:term_variables/3» is already defined
+%	as a difference-list version of «f:term_variables/2».
+»
+«x:%term_variables(Term, Vars0, Vars) :-
+%	term_variables(Term+Vars0, Vars).
+»
+
+«m:%%»«x:	sandbox:safe_meta(+Goal, -Called) is semidet.
+%
+%	Declare the aggregate meta-calls safe. This cannot be proven due
+%	to the manipulations of the argument Goal.
+»
+:- multifile «f:sandbox:safe_meta_predicate/1».
+
+sandbox:safe_meta_predicate(«f:aggregate:foreach/2»).
+sandbox:safe_meta_predicate(«f:aggregate:aggregate/3»).
+sandbox:safe_meta_predicate(«f:aggregate:aggregate/4»).
+sandbox:safe_meta_predicate(«f:aggregate:aggregate_all/3»).
+sandbox:safe_meta_predicate(«f:aggregate:aggregate_all/4»).

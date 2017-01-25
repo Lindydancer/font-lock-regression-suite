@@ -1,0 +1,5162 @@
+«m:#»«x:!/usr/bin/env perl
+»«m:#»«x:
+»«m:# »«x:This file, ack, is generated code.
+»«m:# »«x:Please DO NOT EDIT or send patches for it.
+»«m:#»«x:
+»«m:# »«x:Please take a look at the source from
+»«m:# »«x:https://github.com/petdance/ack2
+»«m:# »«x:and submit patches against the individual files
+»«m:# »«x:that build ack.
+»«m:#»«x:
+»
+«k:package» «f:main»;
+
+«k:use» «c:strict»;
+«k:use» «c:warnings»;
+
+our $«v:VERSION» = «s:'2.14'»; «x:# Check http://beyondgrep.com/ for updates
+»
+«k:use» «c:5».008008;
+«k:use» «c:Getopt»::Long 2.35 ();
+«k:use» «c:Carp» 1.04 ();
+
+«k:use» «c:File»::Spec ();
+
+
+«m:# »«x:XXX Don't make this so brute force
+»«m:# »«x:See also: https://github.com/petdance/ack2/issues/89
+»
+«m:# »«x:These are all our globals.
+»
+«c:MAIN»: {
+    $«v:App::Ack::orig_program_name» = $«v:0»;
+    $«v:0» = join(«s:' '», «s:'ack'», $«v:0»);
+    «k:if» ( $«v:App::Ack::VERSION» ne $«v:main::VERSION» ) {
+        App::Ack::«k:die»( «s:"Program/library version mismatch\n\t$0 is $main::VERSION\n\t$INC{'App/Ack.pm'} is $App::Ack::VERSION"» );
+    }
+
+    «x:# Do preliminary arg checking;
+»    «t:my» $«v:env_is_usable» = 1;
+    «k:for» «t:my» $«v:arg» ( @«U:«v:ARGV»» ) {
+        «k:last» «k:if» ( $«v:arg» eq «s:'--'» );
+
+        «x:# Get the --thpppt, --bar, --cathy checking out of the way.
+»        $«v:arg» =~ «s:/^--th[pt]+t+$/» and App::Ack::_thpppt($«v:arg»);
+        $«v:arg» eq «s:'--bar'»         and App::Ack::_bar();
+        $«v:arg» eq «s:'--cathy'»       and App::Ack::_cathy();
+
+        «x:# See if we want to ignore the environment. (Don't tell Al Gore.)
+»        $«v:arg» eq «s:'--env'»         and $«v:env_is_usable» = 1;
+        $«v:arg» eq «s:'--noenv'»       and $«v:env_is_usable» = 0;
+    }
+
+    «k:if» ( !$«v:env_is_usable» ) {
+        «t:my» @«U:«v:keys»» = ( «s:'ACKRC'», grep { «s:/^ACK_/» } keys %«U:«v:ENV»» );
+        delete @«U:«v:ENV»»{@«U:«v:keys»»};
+    }
+    load_colors();
+
+    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»);
+    Getopt::Long::Configure(«s:'pass_through'», «s:'no_auto_abbrev'»);
+    Getopt::Long::GetOptions(
+        «s:'help'»       => «k:sub» { App::Ack::show_help(); «k:exit»; },
+        «s:'version'»    => «k:sub» { App::Ack::print_version_statement(); «k:exit»; },
+        «s:'man'»        => «k:sub» { App::Ack::show_man(); «k:exit»; },
+    );
+    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»);
+
+    «k:if» ( !@«U:«v:ARGV»» ) {
+        App::Ack::show_help();
+        «k:exit» 1;
+    }
+
+    main();
+}
+
+«k:sub» «f:_compile_descend_filter» {
+    «t:my» ( $«v:opt» ) = @«U:«v:_»»;
+
+    «t:my» $«v:idirs»            = $«v:opt»->{idirs};
+    «t:my» $«v:dont_ignore_dirs» = $«v:opt»->{no_ignore_dirs};
+
+    «x:# if we have one or more --noignore-dir directives, we can't ignore
+»    «x:# entire subdirectory hierarchies, so we return an "accept all"
+»    «x:# filter and scrutinize the files more in _compile_file_filter
+»    «k:return» «k:if» $«v:dont_ignore_dirs»;
+    «k:return» «k:unless» $«v:idirs» && @{$«v:idirs»};
+
+    «t:my» %«U:«v:ignore_dirs»»;
+
+    «k:foreach» «t:my» $«v:idir» (@{$«v:idirs»}) {
+        «k:if» ( $«v:idir» =~ «s:/^(\w+):(.*)/» ) {
+            «k:if» ( $«v:1» eq «s:'is'») {
+                $«v:ignore_dirs»{$«v:2»} = 1;
+            }
+            «k:else» {
+                Carp::croak( «s:'Non-is filters are not yet supported for --ignore-dir'» );
+            }
+        }
+        «k:else» {
+            Carp::croak( qq«s:{Invalid filter specification "$idir"}» );
+        }
+    }
+
+    «k:return» «k:sub» {
+        «k:return» !exists $«v:ignore_dirs»{$«v:_»} && !exists $«v:ignore_dirs»{$«v:File::Next::dir»};
+    };
+}
+
+«k:sub» «f:_compile_file_filter» {
+    «t:my» ( $«v:opt», $«v:start» ) = @«U:«v:_»»;
+
+    «t:my» $«v:ifiles» = $«v:opt»->{ifiles};
+    $«v:ifiles»  ||= [];
+
+    «t:my» $«v:ifiles_filters» = App::Ack::Filter::Collection->new();
+
+    «k:foreach» «t:my» $«v:filter_spec» (@{$«v:ifiles»}) {
+        «k:if» ( $«v:filter_spec» =~ «s:/^(\w+):(.+)/» ) {
+            «t:my» ($«v:how»,$«v:what») = ($«v:1»,$«v:2»);
+            «t:my» $«v:filter» = App::Ack::Filter->create_filter($«v:how», split(«s:/,/», $«v:what»));
+            $«v:ifiles_filters»->add($«v:filter»);
+        }
+        «k:else» {
+            Carp::croak( qq«s:{Invalid filter specification "$filter_spec"}» );
+        }
+    }
+
+    «t:my» $«v:filters»         = $«v:opt»->{«s:'filters'»} || [];
+    «t:my» $«v:direct_filters» = App::Ack::Filter::Collection->new();
+    «t:my» $«v:inverse_filters» = App::Ack::Filter::Collection->new();
+
+    «k:foreach» «t:my» $«v:filter» (@{$«v:filters»}) {
+        «k:if» ($«v:filter»->is_inverted()) {
+            «x:# We want to check if files match the uninverted filters
+»            $«v:inverse_filters»->add($«v:filter»->invert());
+        }
+        «k:else» {
+            $«v:direct_filters»->add($«v:filter»);
+        }
+    }
+
+    «t:my» %«U:«v:is_member_of_starting_set»» = map { (get_file_id($«v:_») => 1) } @{$«v:start»};
+
+    «t:my» $«v:ignore_dir_list»      = $«v:opt»->{idirs};
+    «t:my» $«v:dont_ignore_dir_list» = $«v:opt»->{no_ignore_dirs};
+
+    «t:my» %«U:«v:ignore_dir_set»»;
+    «t:my» %«U:«v:dont_ignore_dir_set»»;
+
+    «k:foreach» «t:my» $«v:filter» (@{ $«v:ignore_dir_list» }) {
+        «k:if» ( $«v:filter» =~ «s:/^(\w+):(.*)/» ) {
+            «k:if» ( $«v:1» eq «s:'is'» ) {
+                $«v:ignore_dir_set»{ $«v:2» } = 1;
+            } «k:else» {
+                Carp::croak( «s:'Non-is filters are not yet supported for --ignore-dir'» );
+            }
+        } «k:else» {
+            Carp::croak( qq«s:{Invalid filter specification "$filter"}» );
+        }
+    }
+    «k:foreach» «t:my» $«v:filter» (@{ $«v:dont_ignore_dir_list» }) {
+        «k:if» ( $«v:filter» =~ «s:/^(\w+):(.*)/» ) {
+            «k:if» ( $«v:1» eq «s:'is'» ) {
+                $«v:dont_ignore_dir_set»{ $«v:2» } = 1;
+            } «k:else» {
+                Carp::croak( «s:'Non-is filters are not yet supported for --ignore-dir'» );
+            }
+        } «k:else» {
+            Carp::croak( qq«s:{Invalid filter specification "$filter"}» );
+        }
+    }
+
+    «t:my» $«v:match_filenames» = $«v:opt»->{g};
+    «t:my» $«v:match_regex»     = $«v:opt»->{regex};
+    «t:my» $«v:is_inverted»     = $«v:opt»->{v};
+
+    «k:return» «k:sub» {
+        «k:if» ( $«v:match_filenames» ) {
+            «k:if» ( $«v:File::Next::name» =~ «s:/$match_regex/» && $«v:is_inverted» ) {
+                «k:return»;
+            }
+            «k:if» ( $«v:File::Next::name» !~ «s:/$match_regex/» && !$«v:is_inverted» ) {
+                «k:return»;
+            }
+        }
+        «x:# ack always selects files that are specified on the command
+»        «x:# line, regardless of filetype.  If you want to ack a JPEG,
+»        «x:# and say "ack foo whatever.jpg" it will do it for you.
+»        «k:return» 1 «k:if» $«v:is_member_of_starting_set»{ get_file_id($«v:File::Next::name») };
+
+        «k:if» ( $«v:dont_ignore_dir_list» ) {
+            «t:my» ( undef, $«v:dirname» ) = File::Spec->splitpath($«v:File::Next::name»);
+            «t:my» @«U:«v:dirs»»               = File::Spec->splitdir($«v:dirname»);
+
+            «t:my» $«v:is_ignoring» = 0;
+
+            «k:foreach» «t:my» $«v:dir» ( @«U:«v:dirs»» ) {
+                «k:if» ( $«v:ignore_dir_set»{ $«v:dir» } ) {
+                    $«v:is_ignoring» = 1;
+                }
+                «k:elsif» ( $«v:dont_ignore_dir_set»{ $«v:dir» } ) {
+                    $«v:is_ignoring» = 0;
+                }
+            }
+            «k:if» ( $«v:is_ignoring» ) {
+                «k:return» 0;
+            }
+        }
+
+        «x:# Ignore named pipes found in directory searching.  Named
+»        «x:# pipes created by subprocesses get specified on the command
+»        «x:# line, so the rule of "always select whatever is on the
+»        «x:# command line" wins.
+»        «k:return» 0 «k:if» -p $«v:File::Next::name»;
+
+        «x:# We can't handle unreadable filenames; report them.
+»        «k:if» ( not -r _ ) {
+            «k:use» «c:filetest» «s:'access'»;
+
+            «k:if» ( not -R $«v:File::Next::name» ) {
+                «k:if» ( $«v:App::Ack::report_bad_filenames» ) {
+                    App::Ack::warn( «s:"${File::Next::name}: cannot open file for reading"» );
+                }
+                «k:return» 0;
+            }
+        }
+
+        «t:my» $«v:resource» = App::Ack::Resource::Basic->new($«v:File::Next::name»);
+        «k:return» 0 «k:if» !$«v:resource» || $«v:ifiles_filters»->filter($«v:resource»);
+
+        «t:my» $«v:match_found» = $«v:direct_filters»->filter($«v:resource»);
+
+        «x:# Don't bother invoking inverse filters unless we consider the current resource a match
+»        «k:if» ( $«v:match_found» && $«v:inverse_filters»->filter( $«v:resource» ) ) {
+            $«v:match_found» = 0;
+        }
+        «k:return» $«v:match_found»;
+    };
+}
+
+«k:sub» «f:show_types» {
+    «t:my» $«v:resource» = shift;
+    «t:my» $«v:ors»      = shift;
+
+    «t:my» @«U:«v:types»» = filetypes( $«v:resource» );
+    «t:my» $«v:types» = join( «s:','», @«U:«v:types»» );
+    «t:my» $«v:arrow» = @«U:«v:types»» ? «s:' => '» : «s:' =>'»;
+    App::Ack::print( $«v:resource»->name, $«v:arrow», join( «s:','», @«U:«v:types»» ), $«v:ors» );
+
+    «k:return»;
+}
+
+«m:# »«x:Set default colors, load Term::ANSIColor
+»«k:sub» «f:load_colors» {
+    «k:eval» «s:'use Term::ANSIColor 1.10 ()'»;
+    «k:eval» «s:'use Win32::Console::ANSI'» «k:if» $«v:App::Ack::is_windows»;
+
+    $«v:ENV»{ACK_COLOR_MATCH}    ||= «s:'black on_yellow'»;
+    $«v:ENV»{ACK_COLOR_FILENAME} ||= «s:'bold green'»;
+    $«v:ENV»{ACK_COLOR_LINENO}   ||= «s:'bold yellow'»;
+
+    «k:return»;
+}
+
+«k:sub» «f:filetypes» {
+    «t:my» ( $«v:resource» ) = @«U:«v:_»»;
+
+    «t:my» @«U:«v:matches»»;
+
+    «k:foreach» «t:my» $«v:k» (keys %«U:«v:App::Ack::mappings»») {
+        «t:my» $«v:filters» = $«v:App::Ack::mappings»{$«v:k»};
+
+        «k:foreach» «t:my» $«v:filter» (@{$«v:filters»}) {
+            «x:# clone the resource
+»            «t:my» $«v:clone» = $«v:resource»->clone;
+            «k:if» ( $«v:filter»->filter($«v:clone») ) {
+                push @«U:«v:matches»», $«v:k»;
+                «k:last»;
+            }
+        }
+    }
+
+    «x:# http://search.cpan.org/dist/Perl-Critic/lib/Perl/Critic/Policy/Subroutines/ProhibitReturnSort.pm
+»    @«U:«v:matches»» = sort @«U:«v:matches»»;
+    «k:return» @«U:«v:matches»»;
+}
+
+«m:# »«x:Returns a (fairly) unique identifier for a file.
+»«m:# »«x:Use this function to compare two files to see if they're
+»«m:# »«x:equal (ie. the same file, but with a different path/links/etc).
+»«k:sub» «f:get_file_id» {
+    «t:my» ( $«v:filename» ) = @«U:«v:_»»;
+
+    «k:if» ( $«v:App::Ack::is_windows» ) {
+        «k:return» File::Next::reslash( $«v:filename» );
+    }
+    «k:else» {
+        «x:# XXX is this the best method? it always hits the FS
+»        «k:if»( «t:my» ( $«v:dev», $«v:inode» ) = (stat($«v:filename»))[0, 1] ) {
+            «k:return» join(«s:':'», $«v:dev», $«v:inode»);
+        }
+        «k:else» {
+            «x:# XXX this could be better
+»            «k:return» $«v:filename»;
+        }
+    }
+}
+
+«m:# »«x:Returns a regex object based on a string and command-line options.
+»«m:# »«x:Dies when the regex $str is undefined (i.e. not given on command line).
+»
+«k:sub» «f:build_regex» {
+    «t:my» $«v:str» = shift;
+    «t:my» $«v:opt» = shift;
+
+    defined $«v:str» or App::Ack::«k:die»( «s:'No regular expression found.'» );
+
+    $«v:str» = quotemeta( $«v:str» ) «k:if» $«v:opt»->{Q};
+    «k:if» ( $«v:opt»->{w} ) {
+        «t:my» $«v:pristine_str» = $«v:str»;
+
+        $«v:str» = «s:"(?:$str)"»;
+        $«v:str» = «s:"\\b$str"» «k:if» $«v:pristine_str» =~ «s:/^\w/»;
+        $«v:str» = «s:"$str\\b"» «k:if» $«v:pristine_str» =~ «s:/\w$/»;
+    }
+
+    «t:my» $«v:regex_is_lc» = $«v:str» eq lc $«v:str»;
+    «k:if» ( $«v:opt»->{i} || ($«v:opt»->{smart_case} && $«v:regex_is_lc») ) {
+        $«v:str» = «s:"(?i)$str"»;
+    }
+
+    «t:my» $«v:re» = «k:eval» { qr«s:/$str/» };
+    «k:if» ( !$«v:re» ) {
+        «k:die» «s:"Invalid regex '$str':\n  $@"»;
+    }
+
+    «k:return» $«v:re»;
+
+}
+
+{
+
+«t:my» @«U:«v:before_ctx_lines»»;
+«t:my» @«U:«v:after_ctx_lines»»;
+«t:my» $«v:is_iterating»;
+
+«t:my» $«v:has_printed_something»;
+
+«k:BEGIN» {
+    $«v:has_printed_something» = 0;
+}
+
+«k:sub» «f:print_matches_in_resource» {
+    «t:my» ( $«v:resource», $«v:opt» ) = @«U:«v:_»»;
+
+    «t:my» $«v:passthru»       = $«v:opt»->{passthru};
+    «t:my» $«v:max_count»      = $«v:opt»->{m} || -1;
+    «t:my» $«v:nmatches»       = 0;
+    «t:my» $«v:filename»       = $«v:resource»->name;
+    «t:my» $«v:break»          = $«v:opt»->{break};
+    «t:my» $«v:heading»        = $«v:opt»->{heading};
+    «t:my» $«v:ors»            = $«v:opt»->{print0} ? «s:"\0"» : «s:"\n"»;
+    «t:my» $«v:color»          = $«v:opt»->{color};
+    «t:my» $«v:print_filename» = $«v:opt»->{show_filename};
+
+    «t:my» $«v:has_printed_for_this_resource» = 0;
+
+    $«v:is_iterating» = 1;
+
+    «t:local» $«v:opt»->{before_context} = $«v:opt»->{output} ? 0 : $«v:opt»->{before_context};
+    «t:local» $«v:opt»->{after_context}  = $«v:opt»->{output} ? 0 : $«v:opt»->{after_context};
+
+    «t:my» $«v:n_before_ctx_lines» = $«v:opt»->{before_context} || 0;
+    «t:my» $«v:n_after_ctx_lines»  = $«v:opt»->{after_context}  || 0;
+
+    @«U:«v:after_ctx_lines»» = @«U:«v:before_ctx_lines»» = ();
+
+    «t:my» $«v:fh» = $«v:resource»->open();
+    «k:if» ( !$«v:fh» ) {
+        «k:if» ( $«v:App::Ack::report_bad_filenames» ) {
+            App::Ack::warn( «s:"$filename: $!"» );
+        }
+        «k:return» 0;
+    }
+
+    «t:my» $«v:display_filename» = $«v:filename»;
+    «k:if» ( $«v:print_filename» && $«v:heading» && $«v:color» ) {
+        $«v:display_filename» = Term::ANSIColor::colored($«v:display_filename», $«v:ENV»{ACK_COLOR_FILENAME});
+    }
+
+    «x:# check for context before the main loop, so we don't
+»    «x:# pay for it if we don't need it
+»    «k:if» ( $«v:n_before_ctx_lines» || $«v:n_after_ctx_lines» ) {
+        «t:my» $«v:current_line» = <$«v:fh»>; «x:# prime the first line of input
+»
+        «k:while» ( defined $«v:current_line» ) {
+            «k:while» ( (@«U:«v:after_ctx_lines»» < $«v:n_after_ctx_lines») && defined($«v:_» = <$«v:fh»>) ) {
+                push @«U:«v:after_ctx_lines»», $«v:_»;
+            }
+
+            «t:local» $«v:_» = $«v:current_line»;
+            «t:my» $«v:former_dot_period» = $.;
+            $. -= @«U:«v:after_ctx_lines»»;
+
+            «k:if» ( does_match($«v:opt», $«v:_») ) {
+                «k:if» ( !$«v:has_printed_for_this_resource» ) {
+                    «k:if» ( $«v:break» && $«v:has_printed_something» ) {
+                        App::Ack::print_blank_line();
+                    }
+                    «k:if» ( $«v:print_filename» && $«v:heading» ) {
+                        App::Ack::print_filename( $«v:display_filename», $«v:ors» );
+                    }
+                }
+                print_line_with_context($«v:opt», $«v:filename», $«v:_», $.);
+                $«v:has_printed_for_this_resource» = 1;
+                $«v:nmatches»++;
+                $«v:max_count»--;
+            }
+            «k:elsif» ( $«v:passthru» ) {
+                chomp; «x:# XXX proper newline handling?
+»                «x:# XXX inline this call?
+»                «k:if» ( $«v:break» && !$«v:has_printed_for_this_resource» && $«v:has_printed_something» ) {
+                    App::Ack::print_blank_line();
+                }
+                print_line_with_options($«v:opt», $«v:filename», $«v:_», $., «s:':'»);
+                $«v:has_printed_for_this_resource» = 1;
+            }
+            «k:last» «k:unless» $«v:max_count» != 0;
+
+            «x:# I tried doing this with local(), but for some reason,
+»            «x:# $. continued to have its new value after the exit of the
+»            «x:# enclosing block.  I'm guessing that $. has some extra
+»            «x:# magic associated with it or something.  If someone can
+»            «x:# tell me why this happened, I would love to know!
+»            $. = $«v:former_dot_period»; «x:# XXX this won't happen on an exception
+»
+            «k:if» ( $«v:n_before_ctx_lines» ) {
+                push @«U:«v:before_ctx_lines»», $«v:current_line»;
+                shift @«U:«v:before_ctx_lines»» «k:while» @«U:«v:before_ctx_lines»» > $«v:n_before_ctx_lines»;
+            }
+            «k:if» ( $«v:n_after_ctx_lines» ) {
+                $«v:current_line» = shift @«U:«v:after_ctx_lines»»;
+            }
+            «k:else» {
+                $«v:current_line» = <$«v:fh»>;
+            }
+        }
+    }
+    «k:else» {
+        «t:local» $«v:_»;
+
+        «k:while» ( <$«v:fh»> ) {
+            «k:if» ( does_match($«v:opt», $«v:_») ) {
+                «k:if» ( !$«v:has_printed_for_this_resource» ) {
+                    «k:if» ( $«v:break» && $«v:has_printed_something» ) {
+                        App::Ack::print_blank_line();
+                    }
+                    «k:if» ( $«v:print_filename» && $«v:heading» ) {
+                        App::Ack::print_filename( $«v:display_filename», $«v:ors» );
+                    }
+                }
+                print_line_with_context($«v:opt», $«v:filename», $«v:_», $.);
+                $«v:has_printed_for_this_resource» = 1;
+                $«v:nmatches»++;
+                $«v:max_count»--;
+            }
+            «k:elsif» ( $«v:passthru» ) {
+                chomp; «x:# XXX proper newline handling?
+»                «k:if» ( $«v:break» && !$«v:has_printed_for_this_resource» && $«v:has_printed_something» ) {
+                    App::Ack::print_blank_line();
+                }
+                print_line_with_options($«v:opt», $«v:filename», $«v:_», $., «s:':'»);
+                $«v:has_printed_for_this_resource» = 1;
+            }
+            «k:last» «k:unless» $«v:max_count» != 0;
+        }
+    }
+
+    $«v:is_iterating» = 0; «x:# XXX this won't happen on an exception
+»                       «x:#     then again, do we care? ack doesn't really
+»                       «x:#     handle exceptions anyway.
+»
+    «k:return» $«v:nmatches»;
+}
+
+«k:sub» «f:print_line_with_options» {
+    «t:my» ( $«v:opt», $«v:filename», $«v:line», $«v:line_no», $«v:separator» ) = @«U:«v:_»»;
+
+    $«v:has_printed_something» = 1;
+
+    «t:my» $«v:print_filename» = $«v:opt»->{show_filename};
+    «t:my» $«v:print_column»   = $«v:opt»->{column};
+    «t:my» $«v:ors»            = $«v:opt»->{print0} ? «s:"\0"» : «s:"\n"»;
+    «t:my» $«v:heading»        = $«v:opt»->{heading};
+    «t:my» $«v:output_expr»    = $«v:opt»->{output};
+    «t:my» $«v:color»          = $«v:opt»->{color};
+
+    «t:my» @«U:«v:line_parts»»;
+
+    «k:if»( $«v:color» ) {
+        $«v:filename» = Term::ANSIColor::colored($«v:filename»,
+            $«v:ENV»{ACK_COLOR_FILENAME});
+        $«v:line_no»  = Term::ANSIColor::colored($«v:line_no»,
+            $«v:ENV»{ACK_COLOR_LINENO});
+    }
+
+    «k:if»($«v:print_filename») {
+        «k:if»( $«v:heading» ) {
+            push @«U:«v:line_parts»», $«v:line_no»;
+        }
+        «k:else» {
+            push @«U:«v:line_parts»», $«v:filename», $«v:line_no»;
+        }
+
+        «k:if»( $«v:print_column» ) {
+            push @«U:«v:line_parts»», get_match_column();
+        }
+    }
+    «k:if»( $«v:output_expr» ) {
+        «k:while» ( $«v:line» =~ «s:/$opt->{regex}/»og ) {
+            «x:# XXX We need to stop using eval() for --output.  See https://github.com/petdance/ack2/issues/421
+»            «t:my» $«v:output» = «k:eval» $«v:output_expr»;
+            App::Ack::print( join( $«v:separator», @«U:«v:line_parts»», $«v:output» ), $«v:ors» );
+        }
+    }
+    «k:else» {
+        «k:if» ( $«v:color» ) {
+            $«v:line» =~ «s:/$opt->{regex}/»o; «x:# this match is redundant, but we need
+»                                       «x:# to perfom it in order to get if
+»                                       «x:# capture groups are set
+»
+            «k:if» ( @+ > 1 ) { «x:# if we have captures
+»                «k:while» ( $«v:line» =~ «s:/$opt->{regex}/»og ) {
+                    «t:my» $«v:offset» = 0; «x:# additional offset for when we add stuff
+»                    «t:my» $«v:previous_match_end» = 0;
+
+                    «k:for» ( «t:my» $«v:i» = 1; $«v:i» < @+; $«v:i»++ ) {
+                        «t:my» ( $«v:match_start», $«v:match_end» ) = ( $-[$«v:i»], $+[$«v:i»] );
+
+                        «k:next» «k:unless» defined($«v:match_start»);
+                        «k:next» «k:if» $«v:match_start» < $«v:previous_match_end»;
+
+                        «t:my» $«v:substring» = substr( $«v:line»,
+                            $«v:offset» + $«v:match_start», $«v:match_end» - $«v:match_start» );
+                        «t:my» $«v:substitution» = Term::ANSIColor::colored( $«v:substring»,
+                            $«v:ENV»{ACK_COLOR_MATCH} );
+
+                        substr( $«v:line», $«v:offset» + $«v:match_start»,
+                            $«v:match_end» - $«v:match_start», $«v:substitution» );
+
+                        $«v:previous_match_end»  = $«v:match_end»; «x:# offsets do not need to be applied
+»                        $«v:offset»             += length( $«v:substitution» ) - length( $«v:substring» );
+                    }
+
+                    pos($«v:line») = $+[0] + $«v:offset»;
+                }
+            }
+            «k:else» {
+                «t:my» $«v:matched» = 0; «x:# flag; if matched, need to escape afterwards
+»
+                «k:while» ( $«v:line» =~ «s:/$opt->{regex}/»og ) {
+
+                    $«v:matched» = 1;
+                    «t:my» ( $«v:match_start», $«v:match_end» ) = ($-[0], $+[0]);
+                    «k:next» «k:unless» defined($«v:match_start»);
+
+                    «t:my» $«v:substring» = substr( $«v:line», $«v:match_start»,
+                        $«v:match_end» - $«v:match_start» );
+                    «t:my» $«v:substitution» = Term::ANSIColor::colored( $«v:substring»,
+                        $«v:ENV»{ACK_COLOR_MATCH} );
+
+                    substr( $«v:line», $«v:match_start», $«v:match_end» - $«v:match_start»,
+                        $«v:substitution» );
+
+                    pos($«v:line») = $«v:match_end» +
+                    (length( $«v:substitution» ) - length( $«v:substring» ));
+                }
+                «x:# XXX why do we do this?
+»                $«v:line» .= «s:"\033[0m\033[K"» «k:if» $«v:matched»;
+            }
+        }
+
+        push @«U:«v:line_parts»», $«v:line»;
+        App::Ack::print( join( $«v:separator», @«U:«v:line_parts»» ), $«v:ors» );
+    }
+
+    «k:return»;
+}
+
+«k:sub» «f:iterate» {
+    «t:my» ( $«v:resource», $«v:opt», $«v:cb» ) = @«U:«v:_»»;
+
+    $«v:is_iterating» = 1;
+
+    «t:local» $«v:opt»->{before_context} = $«v:opt»->{output} ? 0 : $«v:opt»->{before_context};
+    «t:local» $«v:opt»->{after_context}  = $«v:opt»->{output} ? 0 : $«v:opt»->{after_context};
+
+    «t:my» $«v:n_before_ctx_lines» = $«v:opt»->{before_context} || 0;
+    «t:my» $«v:n_after_ctx_lines»  = $«v:opt»->{after_context}  || 0;
+
+    @«U:«v:after_ctx_lines»» = @«U:«v:before_ctx_lines»» = ();
+
+    «t:my» $«v:fh» = $«v:resource»->open();
+    «k:if» ( !$«v:fh» ) {
+        «k:if» ( $«v:App::Ack::report_bad_filenames» ) {
+            App::Ack::warn( $«v:resource»->name . «s:': '» . $! );
+        }
+        «k:return»;
+    }
+
+    «x:# Check for context before the main loop, so we don't pay for it if we don't need it.
+»    «k:if» ( $«v:n_before_ctx_lines» || $«v:n_after_ctx_lines» ) {
+        «t:my» $«v:current_line» = <$«v:fh»>; «x:# prime the first line of input
+»
+        «k:while» ( defined $«v:current_line» ) {
+            «k:while» ( (@«U:«v:after_ctx_lines»» < $«v:n_after_ctx_lines») && defined($«v:_» = <$«v:fh»>) ) {
+                push @«U:«v:after_ctx_lines»», $«v:_»;
+            }
+
+            «t:local» $«v:_» = $«v:current_line»;
+            «t:my» $«v:former_dot_period» = $.;
+            $. -= @«U:«v:after_ctx_lines»»;
+
+            «k:last» «k:unless» $«v:cb»->();
+
+            «x:# I tried doing this with local(), but for some reason,
+»            «x:# $. continued to have its new value after the exit of the
+»            «x:# enclosing block.  I'm guessing that $. has some extra
+»            «x:# magic associated with it or something.  If someone can
+»            «x:# tell me why this happened, I would love to know!
+»            $. = $«v:former_dot_period»; «x:# XXX this won't happen on an exception
+»
+            «k:if» ( $«v:n_before_ctx_lines» ) {
+                push @«U:«v:before_ctx_lines»», $«v:current_line»;
+                shift @«U:«v:before_ctx_lines»» «k:while» @«U:«v:before_ctx_lines»» > $«v:n_before_ctx_lines»;
+            }
+            «k:if» ( $«v:n_after_ctx_lines» ) {
+                $«v:current_line» = shift @«U:«v:after_ctx_lines»»;
+            }
+            «k:else» {
+                $«v:current_line» = <$«v:fh»>;
+            }
+        }
+    }
+    «k:else» {
+        «t:local» $«v:_»;
+
+        «k:while» ( <$«v:fh»> ) {
+            «k:last» «k:unless» $«v:cb»->();
+        }
+    }
+
+    $«v:is_iterating» = 0; «x:# XXX this won't happen on an exception
+»                       «x:#     then again, do we care? ack doesn't really
+»                       «x:#     handle exceptions anyway.
+»
+    «k:return»;
+}
+
+«k:sub» «f:get_context» {
+    «k:if» ( not $«v:is_iterating» ) {
+        Carp::croak( «s:'get_context() called outside of iterate()'» );
+    }
+
+    «k:return» (
+        scalar(@«U:«v:before_ctx_lines»») ? \@«U:«v:before_ctx_lines»» : undef,
+        scalar(@«U:«v:after_ctx_lines»»)  ? \@«U:«v:after_ctx_lines»»  : undef,
+    );
+}
+
+}
+
+{
+
+«t:my» $«v:is_first_match»;
+«t:my» $«v:previous_file_processed»;
+«t:my» $«v:previous_line_printed»;
+
+«k:BEGIN» {
+    $«v:is_first_match»        = 1;
+    $«v:previous_line_printed» = -1;
+}
+
+«k:sub» «f:print_line_with_context» {
+    «t:my» ( $«v:opt», $«v:filename», $«v:matching_line», $«v:line_no» ) = @«U:«v:_»»;
+
+    «t:my» $«v:heading» = $«v:opt»->{heading};
+
+    «k:if»( !defined($«v:previous_file_processed») ||
+      $«v:previous_file_processed» ne $«v:filename» ) {
+        $«v:previous_file_processed» = $«v:filename»;
+        $«v:previous_line_printed»   = -1;
+
+        «k:if»( $«v:heading» ) {
+            $«v:is_first_match» = 1;
+        }
+    }
+
+    «t:my» $«v:ors»                 = $«v:opt»->{print0} ? «s:"\0"» : «s:"\n"»;
+    «t:my» $«v:match_word»          = $«v:opt»->{w};
+    «t:my» $«v:is_tracking_context» = $«v:opt»->{after_context} || $«v:opt»->{before_context};
+    «t:my» $«v:output_expr»         = $«v:opt»->{output};
+
+    $«v:matching_line» =~ s«s:/[\r\n]+$//»g;
+
+    «t:my» ( $«v:before_context», $«v:after_context» ) = get_context();
+
+    «k:if» ( $«v:before_context» ) {
+        «t:my» $«v:first_line» = $. - @{$«v:before_context»};
+
+        «k:if» ( $«v:first_line» <= $«v:previous_line_printed» ) {
+            splice @{$«v:before_context»}, 0, $«v:previous_line_printed» - $«v:first_line» + 1;
+            $«v:first_line» = $. - @{$«v:before_context»};
+        }
+        «k:if» ( @{$«v:before_context»} ) {
+            «t:my» $«v:offset» = @{$«v:before_context»};
+
+            «k:if»( !$«v:is_first_match» && $«v:previous_line_printed» != $«v:first_line» - 1 ) {
+                App::Ack::print(«s:'--'», $«v:ors»);
+            }
+            «k:foreach» «t:my» $«v:line» (@{$«v:before_context»}) {
+                «t:my» $«v:context_line_no» = $. - $«v:offset»;
+                «k:if» ( $«v:context_line_no» <= $«v:previous_line_printed» ) {
+                    «k:next»;
+                }
+
+                chomp $«v:line»;
+                «t:local» $«v:opt»->{column};
+
+                print_line_with_options($«v:opt», $«v:filename», $«v:line», $«v:context_line_no», «s:'-'»);
+                $«v:previous_line_printed» = $«v:context_line_no»;
+                $«v:offset»--;
+            }
+        }
+    }
+
+    «k:if» ( $. > $«v:previous_line_printed» ) {
+        «k:if»( $«v:is_tracking_context» && !$«v:is_first_match» && $«v:previous_line_printed» != $. - 1 ) {
+            App::Ack::print(«s:'--'», $«v:ors»);
+        }
+
+        print_line_with_options($«v:opt», $«v:filename», $«v:matching_line», $«v:line_no», «s:':'»);
+        $«v:previous_line_printed» = $.;
+    }
+
+    «k:if»($«v:after_context») {
+        «t:my» $«v:offset» = 1;
+        «k:foreach» «t:my» $«v:line» (@{$«v:after_context»}) {
+            «x:# XXX improve this!
+»            «k:if» ( $«v:previous_line_printed» >= $. + $«v:offset» ) {
+                $«v:offset»++;
+                «k:next»;
+            }
+            chomp $«v:line»;
+
+            «k:if» ( $«v:opt»->{regex} && does_match( $«v:opt», $«v:line» ) ) {
+                print_line_with_options($«v:opt», $«v:filename», $«v:line», $. + $«v:offset», «s:':'»);
+            }
+            «k:else» {
+                «t:local» $«v:opt»->{column};
+                print_line_with_options($«v:opt», $«v:filename», $«v:line», $. + $«v:offset», «s:'-'»);
+            }
+            $«v:previous_line_printed» = $. + $«v:offset»;
+            $«v:offset»++;
+        }
+    }
+
+    $«v:is_first_match» = 0;
+
+    «k:return»;
+}
+
+}
+
+{
+
+«t:my» $«v:match_column_number»;
+
+«m:# »«x:does_match() MUST have an $opt->{regex} set.
+»
+«k:sub» «f:does_match» {
+    «t:my» ( $«v:opt», $«v:line» ) = @«U:«v:_»»;
+
+    $«v:match_column_number» = undef;
+
+    «k:if» ( $«v:opt»->{v} ) {
+        «k:return» ( $«v:line» !~ «s:/$opt->{regex}/»o );
+    }
+    «k:else» {
+        «k:if» ( $«v:line» =~ «s:/$opt->{regex}/»o ) {
+            «x:# @- = @LAST_MATCH_START
+»            «x:# @+ = @LAST_MATCH_END
+»            $«v:match_column_number» = $-[0] + 1;
+            «k:return» 1;
+        }
+        «k:else» {
+            «k:return»;
+        }
+    }
+}
+
+«k:sub» «f:get_match_column» {
+    «k:return» $«v:match_column_number»;
+}
+
+}
+
+«k:sub» «f:resource_has_match» {
+    «t:my» ( $«v:resource», $«v:opt» ) = @«U:«v:_»»;
+
+    «t:my» $«v:has_match» = 0;
+    «t:my» $«v:fh» = $«v:resource»->open();
+    «k:if» ( !$«v:fh» ) {
+        «k:if» ( $«v:App::Ack::report_bad_filenames» ) {
+            App::Ack::warn( $«v:resource»->name . «s:': '» . $! );
+        }
+    }
+    «k:else» {
+        «t:my» $«v:re» = $«v:opt»->{regex};
+        «k:if» ( $«v:opt»->{v} ) {
+            «k:while» ( <$«v:fh»> ) {
+                «k:if» (!«s:/$re/»o) {
+                    $«v:has_match» = 1;
+                    «k:last»;
+                }
+            }
+        }
+        «k:else» {
+            «x:# XXX read in chunks
+»            «x:# XXX only do this for certain file sizes?
+»            «t:my» $«v:content» = «k:do» {
+                «t:local» $/;
+                <$«v:fh»>;
+            };
+            $«v:has_match» = $«v:content» =~ «s:/$re/»og;
+        }
+        close $«v:fh»;
+    }
+
+    «k:return» $«v:has_match»;
+}
+
+«k:sub» «f:count_matches_in_resource» {
+    «t:my» ( $«v:resource», $«v:opt» ) = @«U:«v:_»»;
+
+    «t:my» $«v:nmatches» = 0;
+    «t:my» $«v:fh» = $«v:resource»->open();
+    «k:if» ( !$«v:fh» ) {
+        «k:if» ( $«v:App::Ack::report_bad_filenames» ) {
+            App::Ack::warn( $«v:resource»->name . «s:': '» . $! );
+        }
+    }
+    «k:else» {
+        «t:my» $«v:re» = $«v:opt»->{regex};
+        «k:if» ( $«v:opt»->{v} ) {
+            «k:while» ( <$«v:fh»> ) {
+                ++$«v:nmatches» «k:if» (!«s:/$re/»o);
+            }
+        }
+        «k:else» {
+            «t:my» $«v:content» = «k:do» {
+                «t:local» $/;
+                <$«v:fh»>;
+            };
+            $«v:nmatches» =()= ($«v:content» =~ «s:/$re/»og);
+        }
+        close $«v:fh»;
+    }
+
+    «k:return» $«v:nmatches»;
+}
+
+«k:sub» «f:main» {
+    «t:my» @«U:«v:arg_sources»» = App::Ack::ConfigLoader::retrieve_arg_sources();
+
+    «t:my» $«v:opt» = App::Ack::ConfigLoader::process_args( @«U:«v:arg_sources»» );
+
+    $«v:App::Ack::report_bad_filenames» = !$«v:opt»->{dont_report_bad_filenames};
+
+    «k:if» ( $«v:opt»->{flush} ) {
+        $| = 1;
+    }
+
+    «k:if» ( !defined($«v:opt»->{color}) && !$«v:opt»->{g} ) {
+        «t:my» $«v:windows_color» = 1;
+        «k:if» ( $«v:App::Ack::is_windows» ) {
+            $«v:windows_color» = «k:eval» { «k:require» «c:Win32»::Console::ANSI; };
+        }
+        $«v:opt»->{color} = !App::Ack::output_to_pipe() && $«v:windows_color»;
+    }
+    «k:if» ( not defined $«v:opt»->{heading} and not defined $«v:opt»->{break}  ) {
+        $«v:opt»->{heading} = $«v:opt»->{break} = !App::Ack::output_to_pipe();
+    }
+
+    «k:if» ( defined($«v:opt»->{H}) || defined($«v:opt»->{h}) ) {
+        $«v:opt»->{show_filename}= $«v:opt»->{H} && !$«v:opt»->{h};
+    }
+
+    «k:if» ( «t:my» $«v:output» = $«v:opt»->{output} ) {
+        $«v:output»        =~ s«s:{\\}{\\\\}»g;
+        $«v:output»        =~ s«s:{"}{\\"}»g;
+        $«v:opt»->{output} = qq«s:{"$output"}»;
+    }
+
+    «t:my» $«v:resources»;
+    «k:if» ( $«v:App::Ack::is_filter_mode» && !$«v:opt»->{files_from} ) { «x:# probably -x
+»        $«v:resources»    = App::Ack::Resources->from_stdin( $«v:opt» );
+        «t:my» $«v:regex» = $«v:opt»->{regex};
+        $«v:regex» = shift @«U:«v:ARGV»» «k:if» not defined $«v:regex»;
+        $«v:opt»->{regex} = build_regex( $«v:regex», $«v:opt» );
+    }
+    «k:else» {
+        «k:if» ( $«v:opt»->{f} || $«v:opt»->{lines} ) {
+            «k:if» ( $«v:opt»->{regex} ) {
+                App::Ack::warn( «s:"regex ($opt->{regex}) specified with -f or --lines"» );
+                App::Ack::exit_from_ack( 0 ); «x:# XXX the 0 is misleading
+»            }
+        }
+        «k:else» {
+            «t:my» $«v:regex» = $«v:opt»->{regex};
+            $«v:regex» = shift @«U:«v:ARGV»» «k:if» not defined $«v:regex»;
+            $«v:opt»->{regex} = build_regex( $«v:regex», $«v:opt» );
+        }
+        «t:my» @«U:«v:start»»;
+        «k:if» ( not defined $«v:opt»->{files_from} ) {
+            @«U:«v:start»» = @«U:«v:ARGV»»;
+        }
+        «k:if» ( !exists($«v:opt»->{show_filename}) ) {
+            «k:unless»(@«U:«v:start»» == 1 && !(-d $«v:start»[0])) {
+                $«v:opt»->{show_filename} = 1;
+            }
+        }
+
+        «k:if» ( defined $«v:opt»->{files_from} ) {
+            $«v:resources» = App::Ack::Resources->from_file( $«v:opt», $«v:opt»->{files_from} );
+            «k:exit» 1 «k:unless» $«v:resources»;
+        }
+        «k:else» {
+            @«U:«v:start»» = («s:'.'») «k:unless» @«U:«v:start»»;
+            «k:foreach» «t:my» $«v:target» (@«U:«v:start»») {
+                «k:if» ( !-e $«v:target» && $«v:App::Ack::report_bad_filenames») {
+                    App::Ack::warn( «s:"$target: No such file or directory"» );
+                }
+            }
+
+            $«v:opt»->{file_filter}    = _compile_file_filter($«v:opt», \@«U:«v:start»»);
+            $«v:opt»->{descend_filter} = _compile_descend_filter($«v:opt»);
+
+            $«v:resources» = App::Ack::Resources->from_argv( $«v:opt», \@«U:«v:start»» );
+        }
+    }
+    App::Ack::set_up_pager( $«v:opt»->{pager} ) «k:if» defined $«v:opt»->{pager};
+
+    «t:my» $«v:print_filenames» = $«v:opt»->{show_filename};
+    «t:my» $«v:max_count»       = $«v:opt»->{m};
+    «t:my» $«v:ors»             = $«v:opt»->{print0} ? «s:"\0"» : «s:"\n"»;
+    «t:my» $«v:only_first»      = $«v:opt»->{1};
+
+    «t:my» $«v:nmatches»    = 0;
+    «t:my» $«v:total_count» = 0;
+«c:RESOURCES»:
+    «k:while» ( «t:my» $«v:resource» = $«v:resources»->«k:next» ) {
+        «x:# XXX Combine the -f and -g functions
+»        «k:if» ( $«v:opt»->{f} ) {
+            «x:# XXX printing should probably happen inside of App::Ack
+»            «k:if» ( $«v:opt»->{show_types} ) {
+                show_types( $«v:resource», $«v:ors» );
+            }
+            «k:else» {
+                App::Ack::print( $«v:resource»->name, $«v:ors» );
+            }
+            ++$«v:nmatches»;
+            «k:last» «c:RESOURCES» «k:if» defined($«v:max_count») && $«v:nmatches» >= $«v:max_count»;
+        }
+        «k:elsif» ( $«v:opt»->{g} ) {
+            «k:if» ( $«v:opt»->{show_types} ) {
+                show_types( $«v:resource», $«v:ors» );
+            }
+            «k:else» {
+                «t:local» $«v:opt»->{show_filename} = 0; «x:# XXX Why is this local?
+»
+                print_line_with_options($«v:opt», «s:''», $«v:resource»->name, 0, $«v:ors»);
+            }
+            ++$«v:nmatches»;
+            «k:last» «c:RESOURCES» «k:if» defined($«v:max_count») && $«v:nmatches» >= $«v:max_count»;
+        }
+        «k:elsif» ( $«v:opt»->{lines} ) {
+            «t:my» $«v:print_filename» = $«v:opt»->{show_filename};
+            «t:my» $«v:passthru»       = $«v:opt»->{passthru};
+
+            «t:my» %«U:«v:line_numbers»»;
+            «k:foreach» «t:my» $«v:line» ( @{ $«v:opt»->{lines} } ) {
+                «t:my» @«U:«v:lines»»             = split «s:/,/», $«v:line»;
+                @«U:«v:lines»»                = map {
+                    «s:/^(\d+)-(\d+)$/»
+                        ? ( $«v:1» .. $«v:2» )
+                        : $«v:_»
+                } @«U:«v:lines»»;
+                @«U:«v:line_numbers»»{@«U:«v:lines»»} = (1) x @«U:«v:lines»»;
+            }
+
+            «t:my» $«v:filename» = $«v:resource»->name;
+
+            «t:local» $«v:opt»->{color} = 0;
+
+            iterate($«v:resource», $«v:opt», «k:sub» {
+                chomp;
+
+                «k:if» ( $«v:line_numbers»{$.} ) {
+                    print_line_with_context($«v:opt», $«v:filename», $«v:_», $.);
+                }
+                «k:elsif» ( $«v:passthru» ) {
+                    print_line_with_options($«v:opt», $«v:filename», $«v:_», $., «s:':'»);
+                }
+                «k:return» 1;
+            });
+        }
+        «k:elsif» ( $«v:opt»->{count} ) {
+            «t:my» $«v:matches_for_this_file» = count_matches_in_resource( $«v:resource», $«v:opt» );
+
+            «k:if» ( not $«v:opt»->{show_filename} ) {
+                $«v:total_count» += $«v:matches_for_this_file»;
+                «k:next» «c:RESOURCES»;
+            }
+
+            «k:if» ( !$«v:opt»->{l} || $«v:matches_for_this_file» > 0) {
+                «k:if» ( $«v:print_filenames» ) {
+                    App::Ack::print( $«v:resource»->name, «s:':'», $«v:matches_for_this_file», $«v:ors» );
+                }
+                «k:else» {
+                    App::Ack::print( $«v:matches_for_this_file», $«v:ors» );
+                }
+            }
+        }
+        «k:elsif» ( $«v:opt»->{l} || $«v:opt»->{L} ) {
+            «t:my» $«v:is_match» = resource_has_match( $«v:resource», $«v:opt» );
+
+            «k:if» ( $«v:opt»->{L} ? !$«v:is_match» : $«v:is_match» ) {
+                App::Ack::print( $«v:resource»->name, $«v:ors» );
+                ++$«v:nmatches»;
+
+                «k:last» «c:RESOURCES» «k:if» $«v:only_first»;
+                «k:last» «c:RESOURCES» «k:if» defined($«v:max_count») && $«v:nmatches» >= $«v:max_count»;
+            }
+        }
+        «k:else» {
+            $«v:nmatches» += print_matches_in_resource( $«v:resource», $«v:opt» );
+            «k:if» ( $«v:nmatches» && $«v:only_first» ) {
+                «k:last» «c:RESOURCES»;
+            }
+        }
+    }
+
+    «k:if» ( $«v:opt»->{count} && !$«v:opt»->{show_filename} ) {
+        App::Ack::print( $«v:total_count», «s:"\n"» );
+    }
+
+    close $«v:App::Ack::fh»;
+    App::Ack::exit_from_ack( $«v:nmatches» );
+}
+
+
+
+«x:=head1 NAME
+
+ack - grep-like text finder
+
+=head1 SYNOPSIS
+
+    ack [options] PATTERN [FILE...]
+    ack -f [options] [DIRECTORY...]
+
+=head1 DESCRIPTION
+
+Ack is designed as an alternative to F<grep> for programmers.
+
+Ack searches the named input FILEs (or standard input if no files
+are named, or the file name - is given) for lines containing a match
+to the given PATTERN.  By default, ack prints the matching lines.
+
+PATTERN is a Perl regular expression.  Perl regular expressions
+are commonly found in other programming languages, but for the particulars
+of their behavior, please consult
+L<http://perldoc.perl.org/perlreref.html|perlreref>.  If you don't know
+how to use regular expression but are interested in learning, you may
+consult L<http://perldoc.perl.org/perlretut.html|perlretut>.  If you do not
+need or want ack to use regular expressions, please see the
+C<-Q>/C<--literal> option.
+
+Ack can also list files that would be searched, without actually
+searching them, to let you take advantage of ack's file-type filtering
+capabilities.
+
+=head1 FILE SELECTION
+
+If files are not specified for searching, either on the command
+line or piped in with the C<-x> option, I<ack> delves into
+subdirectories selecting files for searching.
+
+I<ack> is intelligent about the files it searches.  It knows about
+certain file types, based on both the extension on the file and,
+in some cases, the contents of the file.  These selections can be
+made with the B<--type> option.
+
+With no file selection, I<ack> searches through regular files that
+are not explicitly excluded by B<--ignore-dir> and B<--ignore-file>
+options, either present in F<ackrc> files or on the command line.
+
+The default options for I<ack> ignore certain files and directories.  These
+include:
+
+=over 4
+
+=item * Backup files: Files matching F<#*#> or ending with F<~>.
+
+=item * Coredumps: Files matching F<core.\d+>
+
+=item * Version control directories like F<.svn> and F<.git>.
+
+=back
+
+Run I<ack> with the C<--dump> option to see what settings are set.
+
+However, I<ack> always searches the files given on the command line,
+no matter what type.  If you tell I<ack> to search in a coredump,
+it will search in a coredump.
+
+=head1 DIRECTORY SELECTION
+
+I<ack> descends through the directory tree of the starting directories
+specified.  If no directories are specified, the current working directory is
+used.  However, it will ignore the shadow directories used by
+many version control systems, and the build directories used by the
+Perl MakeMaker system.  You may add or remove a directory from this
+list with the B<--[no]ignore-dir> option. The option may be repeated
+to add/remove multiple directories from the ignore list.
+
+For a complete list of directories that do not get searched, run
+C<ack --dump>.
+
+=head1 WHEN TO USE GREP
+
+I<ack> trumps I<grep> as an everyday tool 99% of the time, but don't
+throw I<grep> away, because there are times you'll still need it.
+
+E.g., searching through huge files looking for regexes that can be
+expressed with I<grep> syntax should be quicker with I<grep>.
+
+If your script or parent program uses I<grep> C<--quiet> or C<--silent>
+or needs exit 2 on IO error, use I<grep>.
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--ackrc>
+
+Specifies an ackrc file to load after all others; see L</"ACKRC LOCATION SEMANTICS">.
+
+=item B<-A I<NUM>>, B<--after-context=I<NUM>>
+
+Print I<NUM> lines of trailing context after matching lines.
+
+=item B<-B I<NUM>>, B<--before-context=I<NUM>>
+
+Print I<NUM> lines of leading context before matching lines.
+
+=item B<--[no]break>
+
+Print a break between results from different files. On by default
+when used interactively.
+
+=item B<-C [I<NUM>]>, B<--context[=I<NUM>]>
+
+Print I<NUM> lines (default 2) of context around matching lines.
+
+=item B<-c>, B<--count>
+
+Suppress normal output; instead print a count of matching lines for
+each input file.  If B<-l> is in effect, it will only show the
+number of lines for each file that has lines matching.  Without
+B<-l>, some line counts may be zeroes.
+
+If combined with B<-h> (B<--no-filename>) ack outputs only one total
+count.
+
+=item B<--[no]color>, B<--[no]colour>
+
+B<--color> highlights the matching text.  B<--nocolor> suppresses
+the color.  This is on by default unless the output is redirected.
+
+On Windows, this option is off by default unless the
+L<Win32::Console::ANSI> module is installed or the C<ACK_PAGER_COLOR>
+environment variable is used.
+
+=item B<--color-filename=I<color>>
+
+Sets the color to be used for filenames.
+
+=item B<--color-match=I<color>>
+
+Sets the color to be used for matches.
+
+=item B<--color-lineno=I<color>>
+
+Sets the color to be used for line numbers.
+
+=item B<--[no]column>
+
+Show the column number of the first match.  This is helpful for
+editors that can place your cursor at a given position.
+
+=item B<--create-ackrc>
+
+Dumps the default ack options to standard output.  This is useful for
+when you want to customize the defaults.
+
+=item B<--dump>
+
+Writes the list of options loaded and where they came from to standard
+output.  Handy for debugging.
+
+=item B<--[no]env>
+
+B<--noenv> disables all environment processing. No F<.ackrc> is
+read and all environment variables are ignored. By default, F<ack>
+considers F<.ackrc> and settings in the environment.
+
+=item B<--flush>
+
+B<--flush> flushes output immediately.  This is off by default
+unless ack is running interactively (when output goes to a pipe or
+file).
+
+=item B<-f>
+
+Only print the files that would be searched, without actually doing
+any searching.  PATTERN must not be specified, or it will be taken
+as a path to search.
+
+=item B<--files-from=I<FILE>>
+
+The list of files to be searched is specified in I<FILE>.  The list of
+files are separated by newlines.  If I<FILE> is C<->, the list is loaded
+from standard input.
+
+=item B<--[no]filter>
+
+Forces ack to act as if it were receiving input via a pipe.
+
+=item B<--[no]follow>
+
+Follow or don't follow symlinks, other than whatever starting files
+or directories were specified on the command line.
+
+This is off by default.
+
+=item B<-g I<PATTERN>>
+
+Print files where the relative path + filename matches I<PATTERN>.
+This option can be combined with B<--color> to make it easier to spot
+the match.
+
+=item B<--[no]group>
+
+B<--group> groups matches by file name.  This is the default
+when used interactively.
+
+B<--nogroup> prints one result per line, like grep.  This is the
+default when output is redirected.
+
+=item B<-H>, B<--with-filename>
+
+Print the filename for each match. This is the default unless searching
+a single explicitly specified file.
+
+=item B<-h>, B<--no-filename>
+
+Suppress the prefixing of filenames on output when multiple files are
+searched.
+
+=item B<--[no]heading>
+
+Print a filename heading above each file's results.  This is the default
+when used interactively.
+
+=item B<--help>, B<-?>
+
+Print a short help statement.
+
+=item B<--help-types>, B<--help=types>
+
+Print all known types.
+
+=item B<-i>, B<--ignore-case>
+
+Ignore case distinctions in PATTERN
+
+=item B<--ignore-ack-defaults>
+
+Tells ack to completely ignore the default definitions provided with ack.
+This is useful in combination with B<--create-ackrc> if you I<really> want
+to customize ack.
+
+=item B<--[no]ignore-dir=I<DIRNAME>>, B<--[no]ignore-directory=I<DIRNAME>>
+
+Ignore directory (as CVS, .svn, etc are ignored). May be used
+multiple times to ignore multiple directories. For example, mason
+users may wish to include B<--ignore-dir=data>. The B<--noignore-dir>
+option allows users to search directories which would normally be
+ignored (perhaps to research the contents of F<.svn/props> directories).
+
+The I<DIRNAME> must always be a simple directory name. Nested
+directories like F<foo/bar> are NOT supported. You would need to
+specify B<--ignore-dir=foo> and then no files from any foo directory
+are taken into account by ack unless given explicitly on the command
+line.
+
+=item B<--ignore-file=I<FILTERTYPE:FILTERARGS>>
+
+Ignore files matching I<FILTERTYPE:FILTERARGS>.  The filters are specified
+identically to file type filters as seen in L</"Defining your own types">.
+
+=item B<-k>, B<--known-types>
+
+Limit selected files to those with types that ack knows about.  This is
+equivalent to the default behavior found in ack 1.
+
+=item B<--lines=I<NUM>>
+
+Only print line I<NUM> of each file. Multiple lines can be given with multiple
+B<--lines> options or as a comma separated list (B<--lines=3,5,7>). B<--lines=4-7>
+also works. The lines are always output in ascending order, no matter the
+order given on the command line.
+
+=item B<-l>, B<--files-with-matches>
+
+Only print the filenames of matching files, instead of the matching text.
+
+=item B<-L>, B<--files-without-matches>
+
+Only print the filenames of files that do I<NOT> match.
+
+=item B<--match I<PATTERN>>
+
+Specify the I<PATTERN> explicitly. This is helpful if you don't want to put the
+regex as your first argument, e.g. when executing multiple searches over the
+same set of files.
+
+    # search for foo and bar in given files
+    ack file1 t/file* --match foo
+    ack file1 t/file* --match bar
+
+=item B<-m=I<NUM>>, B<--max-count=I<NUM>>
+
+Stop reading a file after I<NUM> matches.
+
+=item B<--man>
+
+Print this manual page.
+
+=item B<-n>, B<--no-recurse>
+
+No descending into subdirectories.
+
+=item B<-o>
+
+Show only the part of each line matching PATTERN (turns off text
+highlighting)
+
+=item B<--output=I<expr>>
+
+Output the evaluation of I<expr> for each line (turns off text
+highlighting)
+If PATTERN matches more than once then a line is output for each non-overlapping match.
+For more information please see the section L</"Examples of F<--output>">.
+
+=item B<--pager=I<program>>, B<--nopager>
+
+B<--pager> directs ack's output through I<program>.  This can also be specified
+via the C<ACK_PAGER> and C<ACK_PAGER_COLOR> environment variables.
+
+Using --pager does not suppress grouping and coloring like piping
+output on the command-line does.
+
+B<--nopager> cancels any setting in ~/.ackrc, C<ACK_PAGER> or C<ACK_PAGER_COLOR>.
+No output will be sent through a pager.
+
+=item B<--passthru>
+
+Prints all lines, whether or not they match the expression.  Highlighting
+will still work, though, so it can be used to highlight matches while
+still seeing the entire file, as in:
+
+    # Watch a log file, and highlight a certain IP address
+    $ tail -f ~/access.log | ack --passthru 123.45.67.89
+
+=item B<--print0>
+
+Only works in conjunction with -f, -g, -l or -c (filename output). The filenames
+are output separated with a null byte instead of the usual newline. This is
+helpful when dealing with filenames that contain whitespace, e.g.
+
+    # remove all files of type html
+    ack -f --html --print0 | xargs -0 rm -f
+
+=item B<-Q>, B<--literal>
+
+Quote all metacharacters in PATTERN, it is treated as a literal.
+
+=item B<-r>, B<-R>, B<--recurse>
+
+Recurse into sub-directories. This is the default and just here for
+compatibility with grep. You can also use it for turning B<--no-recurse> off.
+
+=item B<-s>
+
+Suppress error messages about nonexistent or unreadable files.  This is taken
+from fgrep.
+
+=item B<--[no]smart-case>, B<--no-smart-case>
+
+Ignore case in the search strings if PATTERN contains no uppercase
+characters. This is similar to C<smartcase> in vim. This option is
+off by default, and ignored if C<-i> is specified.
+
+B<-i> always overrides this option.
+
+=item B<--sort-files>
+
+Sorts the found files lexicographically.  Use this if you want your file
+listings to be deterministic between runs of I<ack>.
+
+=item B<--show-types>
+
+Outputs the filetypes that ack associates with each file.
+
+Works with B<-f> and B<-g> options.
+
+=item B<--type=[no]TYPE>
+
+Specify the types of files to include or exclude from a search.
+TYPE is a filetype, like I<perl> or I<xml>.  B<--type=perl> can
+also be specified as B<--perl>, and B<--type=noperl> can be done
+as B<--noperl>.
+
+If a file is of both type "foo" and "bar", specifying --foo and
+--nobar will exclude the file, because an exclusion takes precedence
+over an inclusion.
+
+Type specifications can be repeated and are ORed together.
+
+See I<ack --help=types> for a list of valid types.
+
+=item B<--type-add I<TYPE>:I<FILTER>:I<FILTERARGS>>
+
+Files with the given FILTERARGS applied to the given FILTER
+are recognized as being of (the existing) type TYPE.
+See also L</"Defining your own types">.
+
+
+=item B<--type-set I<TYPE>:I<FILTER>:I<FILTERARGS>>
+
+Files with the given FILTERARGS applied to the given FILTER are recognized as
+being of type TYPE. This replaces an existing definition for type TYPE.  See
+also L</"Defining your own types">.
+
+=item B<--type-del I<TYPE>>
+
+The filters associated with TYPE are removed from Ack, and are no longer considered
+for searches.
+
+=item B<-v>, B<--invert-match>
+
+Invert match: select non-matching lines
+
+=item B<--version>
+
+Display version and copyright information.
+
+=item B<-w>, B<--word-regexp>
+
+Force PATTERN to match only whole words.  The PATTERN is wrapped with
+C<\b> metacharacters.
+
+=item B<-x>
+
+An abbreviation for B<--files-from=->; the list of files to search are read
+from standard input, with one line per file.
+
+=item B<-1>
+
+Stops after reporting first match of any kind.  This is different
+from B<--max-count=1> or B<-m1>, where only one match per file is
+shown.  Also, B<-1> works with B<-f> and B<-g>, where B<-m> does
+not.
+
+=item B<--thpppt>
+
+Display the all-important Bill The Cat logo.  Note that the exact
+spelling of B<--thpppppt> is not important.  It's checked against
+a regular expression.
+
+=item B<--bar>
+
+Check with the admiral for traps.
+
+=item B<--cathy>
+
+Chocolate, Chocolate, Chocolate!
+
+=back
+
+=head1 THE .ackrc FILE
+
+The F<.ackrc> file contains command-line options that are prepended
+to the command line before processing.  Multiple options may live
+on multiple lines.  Lines beginning with a # are ignored.  A F<.ackrc>
+might look like this:
+
+    # Always sort the files
+    --sort-files
+
+    # Always color, even if piping to a another program
+    --color
+
+    # Use "less -r" as my pager
+    --pager=less -r
+
+Note that arguments with spaces in them do not need to be quoted,
+as they are not interpreted by the shell. Basically, each I<line>
+in the F<.ackrc> file is interpreted as one element of C<@ARGV>.
+
+F<ack> looks in several locations for F<.ackrc> files; the searching
+process is detailed in L</"ACKRC LOCATION SEMANTICS">.  These
+files are not considered if B<--noenv> is specified on the command line.
+
+=head1 Defining your own types
+
+ack allows you to define your own types in addition to the predefined
+types. This is done with command line options that are best put into
+an F<.ackrc> file - then you do not have to define your types over and
+over again. In the following examples the options will always be shown
+on one command line so that they can be easily copy & pasted.
+
+I<ack --perl foo> searches for foo in all perl files. I<ack --help=types>
+tells you, that perl files are files ending
+in .pl, .pm, .pod or .t. So what if you would like to include .xs
+files as well when searching for --perl files? I<ack --type-add perl:ext:xs --perl foo>
+does this for you. B<--type-add> appends
+additional extensions to an existing type.
+
+If you want to define a new type, or completely redefine an existing
+type, then use B<--type-set>. I<ack --type-set eiffel:ext:e,eiffel> defines
+the type I<eiffel> to include files with
+the extensions .e or .eiffel. So to search for all eiffel files
+containing the word Bertrand use I<ack --type-set eiffel:ext:e,eiffel --eiffel Bertrand>.
+As usual, you can also write B<--type=eiffel>
+instead of B<--eiffel>. Negation also works, so B<--noeiffel> excludes
+all eiffel files from a search. Redefining also works: I<ack --type-set cc:ext:c,h>
+and I<.xs> files no longer belong to the type I<cc>.
+
+When defining your own types in the F<.ackrc> file you have to use
+the following:
+
+  --type-set=eiffel:ext:e,eiffel
+
+or writing on separate lines
+
+  --type-set
+  eiffel:ext:e,eiffel
+
+The following does B<NOT> work in the F<.ackrc> file:
+
+  --type-set eiffel:ext:e,eiffel
+
+
+In order to see all currently defined types, use I<--help-types>, e.g.
+I<ack --type-set backup:ext:bak --type-add perl:ext:perl --help-types>
+
+In addition to filtering based on extension (like ack 1.x allowed), ack 2
+offers additional filter types.  The generic syntax is
+I<--type-set TYPE:FILTER:FILTERARGS>; I<FILTERARGS> depends on the value
+of I<FILTER>.
+
+=over 4
+
+=item is:I<FILENAME>
+
+I<is> filters match the target filename exactly.  It takes exactly one
+argument, which is the name of the file to match.
+
+Example:
+
+    --type-set make:is:Makefile
+
+=item ext:I<EXTENSION>[,I<EXTENSION2>[,...]]
+
+I<ext> filters match the extension of the target file against a list
+of extensions.  No leading dot is needed for the extensions.
+
+Example:
+
+    --type-set perl:ext:pl,pm,t
+
+=item match:I<PATTERN>
+
+I<match> filters match the target filename against a regular expression.
+The regular expression is made case insensitive for the search.
+
+Example:
+
+    --type-set make:match:/(gnu)?makefile/
+
+=item firstlinematch:I<PATTERN>
+
+I<firstlinematch> matches the first line of the target file against a
+regular expression.  Like I<match>, the regular expression is made
+case insensitive.
+
+Example:
+
+    --type-add perl:firstlinematch:/perl/
+
+=back
+
+More filter types may be made available in the future.
+
+=head1 ENVIRONMENT VARIABLES
+
+For commonly-used ack options, environment variables can make life
+much easier.  These variables are ignored if B<--noenv> is specified
+on the command line.
+
+=over 4
+
+=item ACKRC
+
+Specifies the location of the user's F<.ackrc> file.  If this file doesn't
+exist, F<ack> looks in the default location.
+
+=item ACK_OPTIONS
+
+This variable specifies default options to be placed in front of
+any explicit options on the command line.
+
+=item ACK_COLOR_FILENAME
+
+Specifies the color of the filename when it's printed in B<--group>
+mode.  By default, it's "bold green".
+
+The recognized attributes are clear, reset, dark, bold, underline,
+underscore, blink, reverse, concealed black, red, green, yellow,
+blue, magenta, on_black, on_red, on_green, on_yellow, on_blue,
+on_magenta, on_cyan, and on_white.  Case is not significant.
+Underline and underscore are equivalent, as are clear and reset.
+The color alone sets the foreground color, and on_color sets the
+background color.
+
+This option can also be set with B<--color-filename>.
+
+=item ACK_COLOR_MATCH
+
+Specifies the color of the matching text when printed in B<--color>
+mode.  By default, it's "black on_yellow".
+
+This option can also be set with B<--color-match>.
+
+See B<ACK_COLOR_FILENAME> for the color specifications.
+
+=item ACK_COLOR_LINENO
+
+Specifies the color of the line number when printed in B<--color>
+mode.  By default, it's "bold yellow".
+
+This option can also be set with B<--color-lineno>.
+
+See B<ACK_COLOR_FILENAME> for the color specifications.
+
+=item ACK_PAGER
+
+Specifies a pager program, such as C<more>, C<less> or C<most>, to which
+ack will send its output.
+
+Using C<ACK_PAGER> does not suppress grouping and coloring like
+piping output on the command-line does, except that on Windows
+ack will assume that C<ACK_PAGER> does not support color.
+
+C<ACK_PAGER_COLOR> overrides C<ACK_PAGER> if both are specified.
+
+=item ACK_PAGER_COLOR
+
+Specifies a pager program that understands ANSI color sequences.
+Using C<ACK_PAGER_COLOR> does not suppress grouping and coloring
+like piping output on the command-line does.
+
+If you are not on Windows, you never need to use C<ACK_PAGER_COLOR>.
+
+=back
+
+=head1 AVAILABLE COLORS
+
+F<ack> uses the colors available in Perl's L<Term::ANSIColor> module, which
+provides the following listed values. Note that case does not matter when using
+these values.
+
+=head2 Foreground colors
+
+    black  red  green  yellow  blue  magenta  cyan  white
+
+    bright_black  bright_red      bright_green  bright_yellow
+    bright_blue   bright_magenta  bright_cyan   bright_white
+
+=head2 Background colors
+
+    on_black  on_red      on_green  on_yellow
+    on_blue   on_magenta  on_cyan   on_white
+
+    on_bright_black  on_bright_red      on_bright_green  on_bright_yellow
+    on_bright_blue   on_bright_magenta  on_bright_cyan   on_bright_white
+
+=head1 ACK & OTHER TOOLS
+
+=head2 Vim integration
+
+F<ack> integrates easily with the Vim text editor. Set this in your
+F<.vimrc> to use F<ack> instead of F<grep>:
+
+    set grepprg=ack\ -k
+
+That example uses C<-k> to search through only files of the types ack
+knows about, but you may use other default flags. Now you can search
+with F<ack> and easily step through the results in Vim:
+
+  :grep Dumper perllib
+
+Miles Sterrett has written a Vim plugin for F<ack> which allows you to use
+C<:Ack> instead of C<:grep>, as well as several other advanced features.
+
+L<https://github.com/mileszs/ack.vim>
+
+=head2 Emacs integration
+
+Phil Jackson put together an F<ack.el> extension that "provides a
+simple compilation mode ... has the ability to guess what files you
+want to search for based on the major-mode."
+
+L<http://www.shellarchive.co.uk/content/emacs.html>
+
+=head2 TextMate integration
+
+Pedro Melo is a TextMate user who writes "I spend my day mostly
+inside TextMate, and the built-in find-in-project sucks with large
+projects.  So I hacked a TextMate command that was using find +
+grep to use ack.  The result is the Search in Project with ack, and
+you can find it here:
+L<http://www.simplicidade.org/notes/archives/2008/03/search_in_proje.html>"
+
+=head2 Shell and Return Code
+
+For greater compatibility with I<grep>, I<ack> in normal use returns
+shell return or exit code of 0 only if something is found and 1 if
+no match is found.
+
+(Shell exit code 1 is C<$?=256> in perl with C<system> or backticks.)
+
+The I<grep> code 2 for errors is not used.
+
+If C<-f> or C<-g> are specified, then 0 is returned if at least one
+file is found.  If no files are found, then 1 is returned.
+
+=cut
+»
+«x:=head1 DEBUGGING ACK PROBLEMS
+
+If ack gives you output you're not expecting, start with a few simple steps.
+
+=head2 Use B<--noenv>
+
+Your environment variables and F<.ackrc> may be doing things you're
+not expecting, or forgotten you specified.  Use B<--noenv> to ignore
+your environment and F<.ackrc>.
+
+=head2 Use B<-f> to see what files have been selected
+
+Ack's B<-f> was originally added as a debugging tool.  If ack is
+not finding matches you think it should find, run F<ack -f> to see
+what files have been selected.  You can also add the C<--show-types>
+options to show the type of each file selected.
+
+=head2 Use B<--dump>
+
+This lists the ackrc files that are loaded and the options loaded
+from them.
+So for example you can find a list of directories that do not get searched or where filetypes are defined.
+
+=head1 TIPS
+
+=head2 Use the F<.ackrc> file.
+
+The F<.ackrc> is the place to put all your options you use most of
+the time but don't want to remember.  Put all your --type-add and
+--type-set definitions in it.  If you like --smart-case, set it
+there, too.  I also set --sort-files there.
+
+=head2 Use F<-f> for working with big codesets
+
+Ack does more than search files.  C<ack -f --perl> will create a
+list of all the Perl files in a tree, ideal for sending into F<xargs>.
+For example:
+
+    # Change all "this" to "that" in all Perl files in a tree.
+    ack -f --perl | xargs perl -p -i -e's/this/that/g'
+
+or if you prefer:
+
+    perl -p -i -e's/this/that/g' $(ack -f --perl)
+
+=head2 Use F<-Q> when in doubt about metacharacters
+
+If you're searching for something with a regular expression
+metacharacter, most often a period in a filename or IP address, add
+the -Q to avoid false positives without all the backslashing.  See
+the following example for more...
+
+=head2 Use ack to watch log files
+
+Here's one I used the other day to find trouble spots for a website
+visitor.  The user had a problem loading F<troublesome.gif>, so I
+took the access log and scanned it with ack twice.
+
+    ack -Q aa.bb.cc.dd /path/to/access.log | ack -Q -B5 troublesome.gif
+
+The first ack finds only the lines in the Apache log for the given
+IP.  The second finds the match on my troublesome GIF, and shows
+the previous five lines from the log in each case.
+
+=head2 Examples of F<--output>
+
+Following variables are useful in the expansion string:
+
+=over 4
+
+=item C<$&>
+
+The whole string matched by PATTERN.
+
+=item C<$1>, C<$2>, ...
+
+The contents of the 1st, 2nd ... bracketed group in PATTERN.
+
+=item C<$`>
+
+The string before the match.
+
+=item C<$'>
+
+The string after the match.
+
+=back
+
+For more details and other variables see
+L<http://perldoc.perl.org/perlvar.html#Variables-related-to-regular-expressions|perlvar>.
+
+This example shows how to add text around a particular pattern
+(in this case adding _ around word with "e")
+
+    ack2.pl "\w*e\w*" quick.txt --output="$`_$&_$'"
+    _The_ quick brown fox jumps over the lazy dog
+    The quick brown fox jumps _over_ the lazy dog
+    The quick brown fox jumps over _the_ lazy dog
+
+This shows how to pick out particular parts of a match using ( ) within regular expression.
+
+  ack '=head(\d+)\s+(.*)' --output=' $1 : $2'
+  input file contains "=head1 NAME"
+  output  "1 : NAME"
+
+=head2 Share your knowledge
+
+Join the ack-users mailing list.  Send me your tips and I may add
+them here.
+
+=head1 FAQ
+
+=head2 Why isn't ack finding a match in (some file)?
+
+Probably because it's of a type that ack doesn't recognize.  ack's
+searching behavior is driven by filetype.  B<If ack doesn't know
+what kind of file it is, ack ignores the file.>
+
+Use the C<-f> switch to see a list of files that ack will search
+for you.  You can use the C<--show-types> switch to show which type
+ack thinks each file is.
+
+=head2 Wouldn't it be great if F<ack> did search & replace?
+
+No, ack will always be read-only.  Perl has a perfectly good way
+to do search & replace in files, using the C<-i>, C<-p> and C<-n>
+switches.
+
+You can certainly use ack to select your files to update.  For
+example, to change all "foo" to "bar" in all PHP files, you can do
+this from the Unix shell:
+
+    $ perl -i -p -e's/foo/bar/g' $(ack -f --php)
+
+=head2 Can I make ack recognize F<.xyz> files?
+
+Yes!  Please see L</"Defining your own types">.  If you think
+that F<ack> should recognize a type by default, please see
+L</"ENHANCEMENTS">.
+
+=head2 There's already a program/package called ack.
+
+Yes, I know.
+
+=head2 Why is it called ack if it's called ack-grep?
+
+The name of the program is "ack".  Some packagers have called it
+"ack-grep" when creating packages because there's already a package
+out there called "ack" that has nothing to do with this ack.
+
+I suggest you make a symlink named F<ack> that points to F<ack-grep>
+because one of the crucial benefits of ack is having a name that's
+so short and simple to type.
+
+To do that, run this with F<sudo> or as root:
+
+   ln -s /usr/bin/ack-grep /usr/bin/ack
+
+Alternatively, you could use a shell alias:
+
+    # bash/zsh
+    alias ack=ack-grep
+
+    # csh
+    alias ack ack-grep
+
+=head2 What does F<ack> mean?
+
+Nothing.  I wanted a name that was easy to type and that you could
+pronounce as a single syllable.
+
+=head2 Can I do multi-line regexes?
+
+No, ack does not support regexes that match multiple lines.  Doing
+so would require reading in the entire file at a time.
+
+If you want to see lines near your match, use the C<--A>, C<--B>
+and C<--C> switches for displaying context.
+
+=head2 Why is ack telling me I have an invalid option when searching for C<+foo>?
+
+ack treats command line options beginning with C<+> or C<-> as options; if you
+would like to search for these, you may prefix your search term with C<--> or
+use the C<--match> option.  (However, don't forget that C<+> is a regular
+expression metacharacter!)
+
+=head2 Why does C<"ack '.{40000,}'"> fail?  Isn't that a valid regex?
+
+The Perl language limits the repetition quanitifier to 32K.  You
+can search for C<.{32767}> but not C<.{32768}>.
+
+=head1 ACKRC LOCATION SEMANTICS
+
+Ack can load its configuration from many sources.  This list
+specifies the sources Ack looks for configuration; each one
+that is found is loaded in the order specified here, and
+each one overrides options set in any of the sources preceding
+it.  (For example, if I set --sort-files in my user ackrc, and
+--nosort-files on the command line, the command line takes
+precedence)
+
+=over 4
+
+=item *
+
+Defaults are loaded from App::Ack::ConfigDefaults.  This can be omitted
+using C<--ignore-ack-defaults>.
+
+=item * Global ackrc
+
+Options are then loaded from the global ackrc.  This is located at
+C</etc/ackrc> on Unix-like systems.
+
+Under Windows XP and earlier, the ackrc is at
+C<C:\Documents and Settings\All Users\Application Data\ackrc>.
+
+Under Windows Vista/7, the global ackrc is at
+C<C:\ProgramData>
+
+The C<--noenv> option prevents all ackrc files from being loaded.
+
+=item * User ackrc
+
+Options are then loaded from the user's ackrc.  This is located at
+C<$HOME/.ackrc> on Unix-like systems.
+
+Under Windows XP and earlier, the user's ackrc is at
+C<C:\Documents and Settings\$USER\Application Data\ackrc>.
+
+Under Windows Vista/7, the user's ackrc is at
+<C:\Users\$USER\AppData\Roaming>.
+
+If you want to load a different user-level ackrc, it may be specified
+with the C<$ACKRC> environment variable.
+
+The C<--noenv> option prevents all ackrc files from being loaded.
+
+=item * Project ackrc
+
+Options are then loaded from the project ackrc.  The project ackrc is
+the first ackrc file with the name C<.ackrc> or C<_ackrc>, first searching
+in the current directory, then the parent directory, then the grandparent
+directory, etc.  This can be omitted using C<--noenv>.
+
+=item * --ackrc
+
+The C<--ackrc> option may be included on the command line to specify an
+ackrc file that can override all others.  It is consulted even if C<--noenv>
+is present.
+
+=item * ACK_OPTIONS
+
+Options are then loaded from the environment variable C<ACK_OPTIONS>.  This can
+be omitted using C<--noenv>.
+
+=item * Command line
+
+Options are then loaded from the command line.
+
+=back
+
+=head1 DIFFERENCES BETWEEN ACK 1.X AND ACK 2.X
+
+A lot of changes were made for ack 2; here is a list of them.
+
+=head2 GENERAL CHANGES
+
+=over 4
+
+=item *
+
+When no selectors are specified, ack 1.x only searches through files that
+it can map to a file type.  ack 2.x, by contrast, will search through
+every regular, non-binary file that is not explicitly ignored via
+B<--ignore-file> or B<--ignore-dir>.  This is similar to the behavior of the
+B<-a/--all> option in ack 1.x.
+
+=item *
+
+A more flexible filter system has been added, so that more powerful file types
+may be created by the user.  For details, please consult
+L</"Defining your own types">.
+
+=item *
+
+ack now loads multiple ackrc files; see L</"ACKRC LOCATION SEMANTICS"> for
+details.
+
+=item *
+
+ack's default filter definitions aren't special; you may tell ack to
+completely disregard them if you don't like them.
+
+=back
+
+=head2 REMOVED OPTIONS
+
+=over 4
+
+=item *
+
+Because of the change in default search behavior, the B<-a/--all> and
+B<-u/--unrestricted> options have been removed.  In addition, the
+B<-k/--known-types> option was added to cause ack to behave with
+the default search behavior of ack 1.x.
+
+=item *
+
+The B<-G> option has been removed.  Two regular expressions on the
+command line was considered too confusing; to simulate B<-G>'s functionality,
+you may use the new B<-x> option to pipe filenames from one invocation of
+ack into another.
+
+=item *
+
+The B<--binary> option has been removed.
+
+=item *
+
+The B<--skipped> option has been removed.
+
+=item *
+
+The B<--text> option has been removed.
+
+=item *
+
+The B<--invert-file-match> option has been removed.  Instead, you may
+use B<-v> with B<-g>.
+
+=back
+
+=head2 CHANGED OPTIONS
+
+=over 4
+
+=item *
+
+The options that modify the regular expression's behavior (B<-i>, B<-w>,
+B<-Q>, and B<-v>) may now be used with B<-g>.
+
+=back
+
+=head2 ADDED OPTIONS
+
+=over 4
+
+=item *
+
+B<--files-from> was added so that a user may submit a list of filenames as
+a list of files to search.
+
+=item *
+
+B<-x> was added to tell ack to accept a list of filenames via standard input;
+this list is the list of filenames that will be used for the search.
+
+=item *
+
+B<-s> was added to tell ack to suppress error messages about non-existent or
+unreadable files.
+
+=item *
+
+B<--ignore-directory> and B<--noignore-directory> were added as aliases for
+B<--ignore-dir> and B<--noignore-dir> respectively.
+
+=item *
+
+B<--ignore-file> was added so that users may specify patterns of files to
+ignore (ex. /.*~$/).
+
+=item *
+
+B<--dump> was added to allow users to easily find out which options are
+set where.
+
+=item *
+
+B<--create-ackrc> was added so that users may create custom ackrc files based
+on the default settings loaded by ack, and so that users may easily view those
+defaults.
+
+=item *
+
+B<--type-del> was added to selectively remove file type definitions.
+
+=item *
+
+B<--ignore-ack-defaults> was added so that users may ignore ack's default
+options in favor of their own.
+
+=item *
+
+B<--bar> was added so ack users may consult Admiral Ackbar.
+
+=back
+
+=head1 AUTHOR
+
+Andy Lester, C<< <andy at petdance.com> >>
+
+=head1 BUGS
+
+Please report any bugs or feature requests to the issues list at
+Github: L<https://github.com/petdance/ack2/issues>
+
+=head1 ENHANCEMENTS
+
+All enhancement requests MUST first be posted to the ack-users
+mailing list at L<http://groups.google.com/group/ack-users>.  I
+will not consider a request without it first getting seen by other
+ack users.  This includes requests for new filetypes.
+
+There is a list of enhancements I want to make to F<ack> in the ack
+issues list at Github: L<https://github.com/petdance/ack2/issues>
+
+Patches are always welcome, but patches with tests get the most
+attention.
+
+=head1 SUPPORT
+
+Support for and information about F<ack> can be found at:
+
+=over 4
+
+=item * The ack homepage
+
+L<http://beyondgrep.com/>
+
+=item * The ack-users mailing list
+
+L<http://groups.google.com/group/ack-users>
+
+=item * The ack issues list at Github
+
+L<https://github.com/petdance/ack2/issues>
+
+=item * AnnoCPAN: Annotated CPAN documentation
+
+L<http://annocpan.org/dist/ack>
+
+=item * CPAN Ratings
+
+L<http://cpanratings.perl.org/d/ack>
+
+=item * Search CPAN
+
+L<http://search.cpan.org/dist/ack>
+
+=item * Git source repository
+
+L<https://github.com/petdance/ack2>
+
+=back
+
+=head1 ACKNOWLEDGEMENTS
+
+How appropriate to have I<ack>nowledgements!
+
+Thanks to everyone who has contributed to ack in any way, including
+Stephen Thirlwall,
+Jonah Bishop,
+Chris Rebert,
+Denis Howe,
+RaE<uacute>l GundE<iacute>n,
+James McCoy,
+Daniel Perrett,
+Steven Lee,
+Jonathan Perret,
+Fraser Tweedale,
+RaE<aacute>l GundE<aacute>n,
+Steffen Jaeckel,
+Stephan Hohe,
+Michael Beijen,
+Alexandr Ciornii,
+Christian Walde,
+Charles Lee,
+Joe McMahon,
+John Warwick,
+David Steinbrunner,
+Kara Martens,
+Volodymyr Medvid,
+Ron Savage,
+Konrad Borowski,
+Dale Sedivic,
+Michael McClimon,
+Andrew Black,
+Ralph Bodenner,
+Shaun Patterson,
+Ryan Olson,
+Shlomi Fish,
+Karen Etheridge,
+Olivier Mengue,
+Matthew Wild,
+Scott Kyle,
+Nick Hooey,
+Bo Borgerson,
+Mark Szymanski,
+Marq Schneider,
+Packy Anderson,
+JR Boyens,
+Dan Sully,
+Ryan Niebur,
+Kent Fredric,
+Mike Morearty,
+Ingmar Vanhassel,
+Eric Van Dewoestine,
+Sitaram Chamarty,
+Adam James,
+Richard Carlsson,
+Pedro Melo,
+AJ Schuster,
+Phil Jackson,
+Michael Schwern,
+Jan Dubois,
+Christopher J. Madsen,
+Matthew Wickline,
+David Dyck,
+Jason Porritt,
+Jjgod Jiang,
+Thomas Klausner,
+Uri Guttman,
+Peter Lewis,
+Kevin Riggle,
+Ori Avtalion,
+Torsten Blix,
+Nigel Metheringham,
+GE<aacute>bor SzabE<oacute>,
+Tod Hagan,
+Michael Hendricks,
+E<AElig>var ArnfjE<ouml>rE<eth> Bjarmason,
+Piers Cawley,
+Stephen Steneker,
+Elias Lutfallah,
+Mark Leighton Fisher,
+Matt Diephouse,
+Christian Jaeger,
+Bill Sully,
+Bill Ricker,
+David Golden,
+Nilson Santos F. Jr,
+Elliot Shank,
+Merijn Broeren,
+Uwe Voelker,
+Rick Scott,
+Ask BjE<oslash>rn Hansen,
+Jerry Gay,
+Will Coleda,
+Mike O'Regan,
+Slaven ReziE<0x107>,
+Mark Stosberg,
+David Alan Pisoni,
+Adriano Ferreira,
+James Keenan,
+Leland Johnson,
+Ricardo Signes,
+Pete Krawczyk and
+Rob Hoelz.
+
+=head1 COPYRIGHT & LICENSE
+
+Copyright 2005-2014 Andy Lester.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the Artistic License v2.0.
+
+See http://www.perlfoundation.org/artistic_license_2_0 or the LICENSE.md
+file that comes with the ack distribution.
+
+=cut
+»«k:package» «f:App»::Ack;
+
+«k:use» «c:warnings»;
+«k:use» «c:strict»;
+
+
+our $«v:VERSION»;
+our $«v:COPYRIGHT»;
+«k:BEGIN» {
+    $«v:VERSION» = «s:'2.14'»;
+    $«v:COPYRIGHT» = «s:'Copyright 2005-2014 Andy Lester.'»;
+}
+
+our $«v:fh»;
+
+«k:BEGIN» {
+    $«v:fh» = *«v:STDOUT»;
+}
+
+
+our %«U:«v:types»»;
+our %«U:«v:type_wanted»»;
+our %«U:«v:mappings»»;
+our %«U:«v:ignore_dirs»»;
+
+our $«v:is_filter_mode»;
+our $«v:output_to_pipe»;
+
+our $«v:dir_sep_chars»;
+our $«v:is_cygwin»;
+our $«v:is_windows»;
+
+«k:use» «c:File»::Spec 1.00015 ();
+
+«k:BEGIN» {
+    «x:# These have to be checked before any filehandle diddling.
+»    $«v:output_to_pipe»  = not -t *«v:STDOUT»;
+    $«v:is_filter_mode» = -p STDIN;
+
+    $«v:is_cygwin»       = ($^O eq «s:'cygwin'»);
+    $«v:is_windows»      = ($^O eq «s:'MSWin32'»);
+    $«v:dir_sep_chars»   = $«v:is_windows» ? quotemeta( «s:'\\/'» ) : quotemeta( File::Spec->catfile( «s:''», «s:''» ) );
+}
+
+
+
+«k:sub» «f:remove_dir_sep» {
+    «t:my» $«v:path» = shift;
+    $«v:path» =~ s«s:/[$dir_sep_chars]$//»;
+
+    «k:return» $«v:path»;
+}
+
+
+
+«k:sub» «f:warn» {
+    «k:return» CORE::warn( _my_program(), «s:': '», @«U:«v:_»», «s:"\n"» );
+}
+
+
+«k:sub» «f:die» {
+    «k:return» CORE::«k:die»( _my_program(), «s:': '», @«U:«v:_»», «s:"\n"» );
+}
+
+«k:sub» «f:_my_program» {
+    «k:require» «c:File»::Basename;
+    «k:return» File::Basename::basename( $«v:0» );
+}
+
+
+
+«k:sub» «f:filetypes_supported» {
+    «k:return» keys %«U:«v:mappings»»;
+}
+
+«k:sub» «f:_get_thpppt» {
+    «t:my» $«v:y» = q«s:{_   /|,\\'!.x',=(www)=,   U   }»;
+    $«v:y» =~ tr«s:/,x!w/\nOo_/»;
+    «k:return» $«v:y»;
+}
+
+«k:sub» «f:_thpppt» {
+    «t:my» $«v:y» = _get_thpppt();
+    App::Ack::print( «s:"$y ack $_[0]!\n"» );
+    «k:exit» 0;
+}
+
+«k:sub» «f:_bar» {
+    «t:my» $«v:x»;
+    $«v:x» = <<«s:'_BAR'»;«x:
+ 6?!I'7!I"?%+!
+ 3~!I#7#I"7#I!?!+!="+"="+!:!
+ 2?#I!7!I!?#I!7!I"+"=%+"=#
+ 1?"+!?*+!=#~"=!+#?"="+!
+ 0?"+!?"I"?&+!="~!=!~"=!+%="+"
+ /I!+!?)+!?!+!=$~!=!~!="+!="+"?!="?!
+ .?%I"?%+%='?!=#~$="
+ ,,!?%I"?(+$=$~!=#:"~$:!~!
+ ,I!?!I!?"I"?!+#?"+!?!+#="~$:!~!:!~!:!,!:!,":#~!
+ +I!?&+!="+!?#+$=!~":!~!:!~!:!,!:#,!:!,%:"
+ *+!I!?!+$=!+!=!+!?$+#=!~":!~":#,$:",#:!,!:!
+ *I!?"+!?!+!=$+!?#+#=#~":$,!:",!:!,&:"
+ )I!?$=!~!=#+"?!+!=!+!=!~!="~!:!~":!,'.!,%:!~!
+ (=!?"+!?!=!~$?"+!?!+!=#~"=",!="~$,$.",#.!:!=!
+ (I"+"="~"=!+&=!~"=!~!,!~!+!=!?!+!?!=!I!?!+"=!.",!.!,":!
+ %I$?!+!?!=%+!~!+#~!=!~#:#=!~!+!~!=#:!,%.!,!.!:"
+ $I!?!=!?!I!+!?"+!=!~!=!~!?!I!?!=!+!=!~#:",!~"=!~!:"~!=!:",&:" '-/
+ $?!+!I!?"+"=!+"~!,!:"+#~#:#,"=!~"=!,!~!,!.",!:".!:! */! !I!t!'!s! !a! !g!r!e!p!!! !/!
+ $+"=!+!?!+"~!=!:!~!:"I!+!,!~!=!:!~!,!:!,$:!~".&:"~!,# (-/
+ %~!=!~!=!:!.!+"~!:!,!.!,!~!=!:$.!,":!,!.!:!~!,!:!=!.#="~!,!:" ./!
+ %=!~!?!+"?"+!=!~",!.!:!?!~!.!:!,!:!,#.!,!:","~!:!=!~!=!:",!~! ./!
+ %+"~":!~!=#~!:!~!,!.!~!:",!~!=!~!.!:!,!.",!:!,":!=":!.!,!:!7! -/!
+ %~",!:".#:!=!:!,!:"+!:!~!:!.!,!~!,!.#,!.!,$:"~!,":"~!=! */!
+ &=!~!=#+!=!~",!.!:",#:#,!.",+:!,!.",!=!+!?!
+ &~!=!~!=!~!:"~#:",!.!,#~!:!.!+!,!.",$.",$.#,!+!I!?!
+ &~!="~!:!~":!~",!~!=!~":!,!:!~!,!:!,&.$,#."+!?!I!?!I!
+ &~!=!~!=!+!,!:!~!:!=!,!:!~&:$,!.!,".!,".!,#."~!+!?$I!
+ &~!=!~!="~!=!:!~":!,!~%:#,!:",!.!,#.",#I!7"I!?!+!?"I"
+ &+!I!7!:#~"=!~!:!,!:"~$.!=!.!,!~!,$.#,!~!7!I#?!+!?"I"7!
+ %7#?!+!~!:!=!~!=!~":!,!:"~":#.!,)7#I"?"I!7&
+ %7#I!=":!=!~!:"~$:"~!:#,!:!,!:!~!:#,!7#I!?#7)
+ $7$+!,!~!=#~!:!~!:!~$:#,!.!~!:!=!,":!7#I"?#7+=!?!
+ $7#I!~!,!~#=!~!:"~!:!,!:!,#:!=!~",":!7$I!?#I!7*+!=!+"
+ "I!7$I!,":!,!.!=":$,!:!,$:$7$I!+!?"I!7+?"I!7!I!7!,!
+ !,!7%I!:",!."~":!,&.!,!:!~!I!7$I!+!?"I!7,?!I!7',!
+ !7(,!.#~":!,%.!,!7%I!7!?#I"7,+!?!7*
+7+:!,!~#,"=!7'I!?#I"7/+!7+
+77I!+!7!?!7!I"71+!7,
+_BAR
+»
+    «k:return» App::Ack::__pic($«v:x»);
+}
+
+«k:sub» «f:_cathy» {
+    «t:my» $«v:x» = <<«s:'CATHY'»;«x:
+ 0+!--+!
+ 0|! "C!H!O!C!O!L!A!T!E!!! !|!
+ 0|! "C!H!O!C!O!L!A!T!E!!! !|!
+ 0|! "C!H!O!C!O!L!A!T!E!!! !|!
+ 0|! $A"C!K!!! $|!
+ 0+!--+!
+ 6\! 1:!,!.! !
+ 7\! /.!M!~!Z!M!~!
+ 8\! /~!D! "M! !
+ 4.! $\! /M!~!.!8! +.!M# 4
+ 0,!.! (\! .~!M!N! ,+!I!.!M!.! 3
+ /?!O!.!M!:! '\! .O!.! +~!Z!=!N!.! 4
+ ..! !D!Z!.!Z!.! '\! 9=!M".! 6
+ /.! !.!~!M".! '\! 8~! 9
+ 4M!.! /.!7!N!M!.! F
+ 4.! &:!M! !N"M# !M"N!M! #D!M&=! =
+ :M!7!M#:! !~!M!7!,!$!M!:! #.! !O!N!.!M!:!M# ;
+ 8Z!M"~!N!$!D!.!N!?! !I!N!.! (?!M! !M!,!D!M".! 9
+ (?!Z!M!N!:! )=!M!O!8!.!M!+!M! !M!,! !O!M! +,!M!.!M!~!Z!N!M!:! &:!~! 0
+ &8!7!.!~!M"D!M!,! &M!?!=!8! !M!,!O! !M!+! !+!O!.!M! $M#~! !.!8!M!Z!.!M! !O!M"Z! %:!~!M!Z!M!Z!.! +
+ &:!M!7!,! *M!.!Z!M! !8"M!.!M!~! !.!M!.!=! #~!8!.!M! !7!M! "N!Z#I! !D!M!,!M!.! $."M!,! !M!.! *
+ 2$!O! "N! !.!M!I! !7" "M! "+!O! !~!M! !d!O!.!7!I!M!.! !.!O!=!M!.! !M",!M!.! %.!$!O!D! +
+ 1~!O! "M!+! !8!$! "M! "?!O! %Z!8!D!M!?!8!I!O!7!M! #M!.!M! "M",!M! 4
+ 07!~! ".!8! !.!M! "I!+! !.!M! &Z!D!.!7!=!M! !:!.!M! #:!8"+! !.!+!8! !8! 3
+ /~!M! #N! !~!M!$! !.!M! !.!M" &~!M! "~!M!O! "D! $M! !8! "M!,!M!+!D!.! 1
+ #.! #?!M!N!.! #~!O! $M!.!7!$! "?" !?!~!M! '7!8!?!M!.!+!M"O! $?"$!D! !.!O! !$!7!I!.! 0
+ $,!M!:!O!?! ".! !?!=! $=!:!O! !M! "M! !M! !+!$! (.! +.!M! !M!.! !8! !+"Z!~! $:!M!$! !.! '
+ #.!8!.!I!$! $7!I! %M" !=!M! !~!M!D! "7!I! .I!O! %?!=!,!D! !,!M! !D!~!8!~! %D!M! (
+ #.!M"?! $=!O! %=!N! "8!.! !Z!M! #M!~! (M!:! #.!M" &O! !M!.! !?!,! !8!.!N!~! $8!N!M!,!.! %
+ *$!O! &M!,! "O! !.!M!.! #M! (~!M( &O!.! !7! "M! !.!M!.!M!,! #.!M! !M! &
+ )=!8!.! $.!M!O!.! "$!.!I!N! !I!M# (7!M(I! %D"Z!M! "=!I! "M! !M!:! #~!D! '
+ )D! &8!N!:! ".!O! !M!="M! "M! (7!M) %." !M!D!."M!.! !$!=! !M!,! +
+ (M! &+!.!M! #Z!7!O!M!.!~!8! +,!M#D!?!M#D! #.!Z!M#,!Z!?! !~!N! "N!.! !M! +
+ 'D!:! %$!D! !?! #M!Z! !8!.! !M"?!7!?!7! '+!I!D! !?!O!:!M!:! ":!M!:! !M!7".!M! "8!+! !:!D! !.!M! *
+ %.!O!:! $.!O!+! !D!.! #M! "M!.!+!N!I!Z! "7!M!N!M!N!?!I!7!Z!=!M'D"~! #M!.!8!$! !:! !.!M! "N!?! !,!O! )
+ !.!?!M!:!M!I! %8!,! "M!.! #M! "N! !M!.! !M!.! !+!~! !.!M!.! ':!M! $M! $M!Z!$! !M!.! "D! "M! "?!M! (
+ !7!8! !+!I! ".! "$!=! ":!$! "+! !M!.! !O! !M!I!M".! !=!~! ",!O! '=!M! $$!,! #N!:! ":!8!.! !D!~! !,!M!.! !:!M!.! &
+ !:!,!.! &Z" #D! !.!8!."M!.! !8!?!Z!M!.!M! #Z!~! !?!M!Z!.! %~!O!.!8!$!N!8!O!I!:!~! !+! #M!.! !.!M!.! !+!M! ".!~!M!+! $
+ !.! 'D!I! #?!M!.!M!,! !.!Z! !.!8! #M&O!I!?! (~!I!M"." !M!Z!.! !M!N!.! "+!$!.! "M!.! !M!?!.! "8!M! $
+ (O!8! $M! !M!.! ".!:! !+!=! #M! #.!M! !+" *$!M":!.! !M!~! "M!7! #M! #7!Z! "M"$!M!.! !.! #
+ '$!Z! #.!7!+!M! $.!,! !+!:! #N! #.!M!.!+!M! +D!M! #=!N! ":!O! #=!M! #Z!D! $M!I! %
+ $,! ".! $.!M" %$!.! !?!~! "+!7!." !.!M!,! !M! *,!N!M!.$M!?! "D!,! #M!.! #N! +
+ ,M!Z! &M! "I!,! "M! %I!M! !?!=!.! (Z!8!M! $:!M!.! !,!M! $D! #.!M!.! )
+ +8!O! &.!8! "I!,! !~!M! &N!M! !M!D! '?!N!O!." $?!7! "?!~! #M!.! #I!D!.! (
+ 3M!,! "N!.! !D" &.!+!M!.! !M":!.":!M!7!M!D! 'M!.! "M!.! "M!,! $I! )
+ 3I! #M! "M!,! !:! &.!M" ".!,! !.!$!M!I! #.! !:! !.!M!?! "N!+! ".! /
+ 1M!,! #.!M!8!M!=!.! +~!N"O!Z"~! *+!M!.! "M! 2
+ 0.!M! &M!.! 8:! %.!M!Z! "M!=! *O!,! %
+ 0?!$! &N! )." .,! %."M! ":!M!.! 0
+ 0N!:! %?!O! #.! ..! &,! &.!D!,! "N!I! 0
+CATHY
+»    «k:return» App::Ack::__pic($«v:x»);
+}
+
+«k:sub» «f:__pic» {
+    «t:my»($«v:compressed») = @«U:«v:_»»;
+    $«v:compressed» =~ s«s:/(.)(.)/$1x(ord($2)-32)/»eg;
+    App::Ack::print( $«v:compressed» );
+    «k:exit» 0;
+}
+
+
+«k:sub» «f:show_help» {
+    «t:my» $«v:help_arg» = shift || 0;
+
+    «k:return» show_help_types() «k:if» $«v:help_arg» =~ «s:/^types?/»;
+
+    App::Ack::print( <<«s:"END_OF_HELP"» );«x:
+Usage: ack [OPTION]... PATTERN [FILES OR DIRECTORIES]
+
+Search for PATTERN in each source file in the tree from the current
+directory on down.  If any files or directories are specified, then
+only those files and directories are checked.  ack may also search
+STDIN, but only if no file or directory arguments are specified,
+or if one of them is "-".
+
+Default switches may be specified in ACK_OPTIONS environment variable or
+an .ackrc file. If you want no dependency on the environment, turn it
+off with --noenv.
+
+Example: ack -i select
+
+Searching:
+  -i, --ignore-case             Ignore case distinctions in PATTERN
+  --[no]smart-case              Ignore case distinctions in PATTERN,
+                                only if PATTERN contains no upper case.
+                                Ignored if -i is specified
+  -v, --invert-match            Invert match: select non-matching lines
+  -w, --word-regexp             Force PATTERN to match only whole words
+  -Q, --literal                 Quote all metacharacters; PATTERN is literal
+
+Search output:
+  --lines=NUM                   Only print line(s) NUM of each file
+  -l, --files-with-matches      Only print filenames containing matches
+  -L, --files-without-matches   Only print filenames with no matches
+  --output=expr                 Output the evaluation of expr for each line
+                                (turns off text highlighting)
+  -o                            Show only the part of a line matching PATTERN
+                                Same as --output='\$&'
+  --passthru                    Print all lines, whether matching or not
+  --match PATTERN               Specify PATTERN explicitly.
+  -m, --max-count=NUM           Stop searching in each file after NUM matches
+  -1                            Stop searching after one match of any kind
+  -H, --with-filename           Print the filename for each match (default:
+                                on unless explicitly searching a single file)
+  -h, --no-filename             Suppress the prefixing filename on output
+  -c, --count                   Show number of lines matching per file
+  --[no]column                  Show the column number of the first match
+
+  -A NUM, --after-context=NUM   Print NUM lines of trailing context after
+                                matching lines.
+  -B NUM, --before-context=NUM  Print NUM lines of leading context before
+                                matching lines.
+  -C [NUM], --context[=NUM]     Print NUM lines (default 2) of output context.
+
+  --print0                      Print null byte as separator between filenames,
+                                only works with -f, -g, -l, -L or -c.
+
+  -s                            Suppress error messages about nonexistent or
+                                unreadable files.
+
+
+File presentation:
+  --pager=COMMAND               Pipes all ack output through COMMAND.  For
+                                example, --pager="less -R".  Ignored if output
+                                is redirected.
+  --nopager                     Do not send output through a pager.  Cancels
+                                any setting in ~/.ackrc, ACK_PAGER or
+                                ACK_PAGER_COLOR.
+  --[no]heading                 Print a filename heading above each file's
+                                results.  (default: on when used interactively)
+  --[no]break                   Print a break between results from different
+                                files.  (default: on when used interactively)
+  --group                       Same as --heading --break
+  --nogroup                     Same as --noheading --nobreak
+  --[no]color                   Highlight the matching text (default: on unless
+                                output is redirected, or on Windows)
+  --[no]colour                  Same as --[no]color
+  --color-filename=COLOR
+  --color-match=COLOR
+  --color-lineno=COLOR          Set the color for filenames, matches, and line
+                                numbers.
+  --flush                       Flush output immediately, even when ack is used
+                                non-interactively (when output goes to a pipe or
+                                file).
+
+
+File finding:
+  -f                            Only print the files selected, without
+                                searching.  The PATTERN must not be specified.
+  -g                            Same as -f, but only select files matching
+                                PATTERN.
+  --sort-files                  Sort the found files lexically.
+  --show-types                  Show which types each file has.
+  --files-from=FILE             Read the list of files to search from FILE.
+  -x                            Read the list of files to search from STDIN.
+
+File inclusion/exclusion:
+  --[no]ignore-dir=name         Add/remove directory from list of ignored dirs
+  --[no]ignore-directory=name   Synonym for ignore-dir
+  --ignore-file=filter          Add filter for ignoring files
+  -r, -R, --recurse             Recurse into subdirectories (default: on)
+  -n, --no-recurse              No descending into subdirectories
+  --[no]follow                  Follow symlinks.  Default is off.
+  -k, --known-types             Include only files of types that ack recognizes.
+
+  --type=X                      Include only X files, where X is a recognized
+                                filetype.
+  --type=noX                    Exclude X files.
+                                See "ack --help-types" for supported filetypes.
+
+File type specification:
+  --type-set TYPE:FILTER:FILTERARGS
+                                Files with the given FILTERARGS applied to the
+                                given FILTER are recognized as being of type
+                                TYPE. This replaces an existing definition for
+                                type TYPE.
+  --type-add TYPE:FILTER:FILTERARGS
+                                Files with the given FILTERARGS applied to the
+                                given FILTER are recognized as being type TYPE.
+  --type-del TYPE               Removes all filters associated with TYPE.
+
+
+Miscellaneous:
+  --[no]env                     Ignore environment variables and global ackrc
+                                files.  --env is legal but redundant.
+  --ackrc=filename              Specify an ackrc file to use
+  --ignore-ack-defaults         Ignore default definitions included with ack.
+  --create-ackrc                Outputs a default ackrc for your customization
+                                to standard output.
+  --help, -?                    This help
+  --help-types                  Display all known types
+  --dump                        Dump information on which options are loaded
+                                from which RC files
+  --[no]filter                  Force ack to treat standard input as a pipe
+                                (--filter) or tty (--nofilter)
+  --man                         Man page
+  --version                     Display version & copyright
+  --thpppt                      Bill the Cat
+  --bar                         The warning admiral
+  --cathy                       Chocolate! Chocolate! Chocolate!
+
+Exit status is 0 if match, 1 if no match.
+
+ack's home page is at http://beyondgrep.com/
+
+The full ack manual is available by running "ack --man".
+
+This is version $VERSION of ack.  Run "ack --version" for full version info.
+END_OF_HELP
+»
+    «k:return»;
+ }
+
+
+
+«k:sub» «f:show_help_types» {
+    App::Ack::print( <<«s:'END_OF_HELP'» );«x:
+Usage: ack [OPTION]... PATTERN [FILES OR DIRECTORIES]
+
+The following is the list of filetypes supported by ack.  You can
+specify a file type with the --type=TYPE format, or the --TYPE
+format.  For example, both --type=perl and --perl work.
+
+Note that some extensions may appear in multiple types.  For example,
+.pod files are both Perl and Parrot.
+
+END_OF_HELP
+»
+    «t:my» @«U:«v:types»» = filetypes_supported();
+    «t:my» $«v:maxlen» = 0;
+    «k:for» ( @«U:«v:types»» ) {
+        $«v:maxlen» = length «k:if» $«v:maxlen» < length;
+    }
+    «k:for» «t:my» $«v:type» ( sort @«U:«v:types»» ) {
+        «k:next» «k:if» $«v:type» =~ «s:/^-/»; «x:# Stuff to not show
+»        «t:my» $«v:ext_list» = $«v:mappings»{$«v:type»};
+
+        «k:if» ( ref $«v:ext_list» ) {
+            $«v:ext_list» = join( «s:'; '», map { $«v:_»->to_string } @{$«v:ext_list»} );
+        }
+        App::Ack::print( sprintf( «s:"    --[no]%-*.*s %s\n"», $«v:maxlen», $«v:maxlen», $«v:type», $«v:ext_list» ) );
+    }
+
+    «k:return»;
+}
+
+«k:sub» «f:show_man» {
+    «k:require» «c:Pod»::Usage;
+
+    Pod::Usage::pod2usage({
+        -input   => $«v:App::Ack::orig_program_name»,
+        -verbose => 2,
+        -exitval => 0,
+    });
+
+    «k:return»;
+}
+
+
+«k:sub» «f:get_version_statement» {
+    «k:require» «c:Config»;
+
+    «t:my» $«v:copyright» = get_copyright();
+    «t:my» $«v:this_perl» = $«v:Config::Config»{perlpath};
+    «k:if» ($^O ne «s:'VMS'») {
+        «t:my» $«v:ext» = $«v:Config::Config»{_exe};
+        $«v:this_perl» .= $«v:ext» «k:unless» $«v:this_perl» =~ m«s:/$ext$/»i;
+    }
+    «t:my» $«v:ver» = sprintf( «s:'%vd'», $^V );
+
+    «k:return» <<«s:"END_OF_VERSION"»;«x:
+ack ${VERSION}
+Running under Perl $ver at $this_perl
+
+$copyright
+
+This program is free software.  You may modify or distribute it
+under the terms of the Artistic License v2.0.
+END_OF_VERSION
+»}
+
+
+«k:sub» «f:print_version_statement» {
+    App::Ack::print( get_version_statement() );
+
+    «k:return»;
+}
+
+
+«k:sub» «f:get_copyright» {
+    «k:return» $«v:COPYRIGHT»;
+}
+
+
+«m:# »«x:print*() subs added in order to make it easy for a third party
+»«m:# »«x:module (such as App::Wack) to redefine the display methods
+»«m:# »«x:and show the results in a different way.
+»«k:sub» «f:print»                   { print {$«v:fh»} @«U:«v:_»»; «k:return»; }
+«k:sub» «f:print_first_filename»    { App::Ack::print( $«v:_»[0], «s:"\n"» ); «k:return»; }
+«k:sub» «f:print_blank_line»        { App::Ack::print( «s:"\n"» ); «k:return»; }
+«k:sub» «f:print_separator»         { App::Ack::print( «s:"--\n"» ); «k:return»; }
+«k:sub» «f:print_filename»          { App::Ack::print( $«v:_»[0], $«v:_»[1] ); «k:return»; }
+«k:sub» «f:print_line_no»           { App::Ack::print( $«v:_»[0], $«v:_»[1] ); «k:return»; }
+«k:sub» «f:print_column_no»         { App::Ack::print( $«v:_»[0], $«v:_»[1] ); «k:return»; }
+«k:sub» «f:print_count» {
+    «t:my» $«v:filename» = shift;
+    «t:my» $«v:nmatches» = shift;
+    «t:my» $«v:ors» = shift;
+    «t:my» $«v:count» = shift;
+    «t:my» $«v:show_filename» = shift;
+
+    «k:if» ($«v:show_filename») {
+        App::Ack::print( $«v:filename» );
+        App::Ack::print( «s:':'», $«v:nmatches» ) «k:if» $«v:count»;
+    }
+    «k:else» {
+        App::Ack::print( $«v:nmatches» ) «k:if» $«v:count»;
+    }
+    App::Ack::print( $«v:ors» );
+
+    «k:return»;
+}
+
+«k:sub» «f:print_count0» {
+    «t:my» $«v:filename» = shift;
+    «t:my» $«v:ors» = shift;
+    «t:my» $«v:show_filename» = shift;
+
+    «k:if» ($«v:show_filename») {
+        App::Ack::print( $«v:filename», «s:':0'», $«v:ors» );
+    }
+    «k:else» {
+        App::Ack::print( «s:'0'», $«v:ors» );
+    }
+
+    «k:return»;
+}
+
+«k:sub» «f:set_up_pager» {
+    «t:my» $«v:command» = shift;
+
+    «k:return» «k:if» App::Ack::output_to_pipe();
+
+    «t:my» $«v:pager»;
+    «k:if» ( not open( $«v:pager», «s:'|-'», $«v:command» ) ) {
+        App::Ack::«k:die»( qq«s:{Unable to pipe to pager "$command": $!}» );
+    }
+    $«v:fh» = $«v:pager»;
+
+    «k:return»;
+}
+
+
+«k:sub» «f:output_to_pipe» {
+    «k:return» $«v:output_to_pipe»;
+}
+
+
+«k:sub» «f:exit_from_ack» {
+    «t:my» $«v:nmatches» = shift;
+
+    «t:my» $«v:rc» = $«v:nmatches» ? 0 : 1;
+    «k:exit» $«v:rc»;
+}
+
+
+
+1; «x:# End of App::Ack
+»«k:package» «f:App»::Ack::Resource;
+
+
+«k:use» «c:warnings»;
+«k:use» «c:strict»;
+«k:use» «c:overload»
+    «s:'""'» => «s:'name'»;
+
+«k:sub» «f:FAIL» {
+    «k:require» «c:Carp»;
+    Carp::confess( «s:'Must be overloaded'» );
+}
+
+
+«k:sub» «f:new» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «f:name» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «f:is_binary» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «f:open» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «f:needs_line_scan» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «f:reset» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «f:close» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «f:clone» {
+    «k:return» FAIL();
+}
+
+
+«k:sub» «f:firstliney» {
+    «k:return» FAIL();
+}
+
+1;
+«k:package» «f:App»::Ack::Resources;
+
+
+
+«k:use» «c:warnings»;
+«k:use» «c:strict»;
+
+«k:sub» «f:_generate_error_handler» {
+    «t:my» $«v:opt» = shift;
+
+    «k:if» ( $«v:opt»->{dont_report_bad_filenames} ) {
+        «k:return» «k:sub» {
+            «t:my» $«v:msg» = shift;
+            «x:# XXX restricting to specific error messages for now; I would
+»            «x:#     prefer a different way of doing this
+»            «k:if» ( $«v:msg» =~ «s:/Permission denied/» ) {
+                «k:return»;
+            }
+            App::Ack::warn( $«v:msg» );
+        };
+    }
+    «k:else» {
+        «k:return» «k:sub» {
+            «t:my» $«v:msg» = shift;
+            App::Ack::warn( $«v:msg» );
+        };
+    }
+}
+
+
+«k:sub» «f:from_argv» {
+    «t:my» $«v:class» = shift;
+    «t:my» $«v:opt»   = shift;
+    «t:my» $«v:start» = shift;
+
+    «t:my» $«v:self» = bless {}, $«v:class»;
+
+    «t:my» $«v:file_filter»    = undef;
+    «t:my» $«v:descend_filter» = $«v:opt»->{descend_filter};
+
+    «k:if»( $«v:opt»->{n} ) {
+        $«v:descend_filter» = «k:sub» {
+            «k:return» 0;
+        };
+    }
+
+    $«v:self»->{iter} =
+        File::Next::files( {
+            file_filter     => $«v:opt»->{file_filter},
+            descend_filter  => $«v:descend_filter»,
+            error_handler   => _generate_error_handler($«v:opt»),
+            warning_handler => «k:sub» {},
+            sort_files      => $«v:opt»->{sort_files},
+            follow_symlinks => $«v:opt»->{follow},
+        }, @{$«v:start»} );
+
+    «k:return» $«v:self»;
+}
+
+
+«k:sub» «f:from_file» {
+    «t:my» $«v:class» = shift;
+    «t:my» $«v:opt»   = shift;
+    «t:my» $«v:file»  = shift;
+
+    «t:my» $«v:iter» =
+        File::Next::from_file( {
+            error_handler   => _generate_error_handler($«v:opt»),
+            warning_handler => _generate_error_handler($«v:opt»),
+            sort_files      => $«v:opt»->{sort_files},
+        }, $«v:file» ) or «k:return» undef;
+
+    «k:return» bless {
+        iter => $«v:iter»,
+    }, $«v:class»;
+}
+
+«m:# »«x:This is for reading input lines from STDIN, not the list of files from STDIN
+»«k:sub» «f:from_stdin» {
+    «t:my» $«v:class» = shift;
+    «t:my» $«v:opt»   = shift;
+
+    «t:my» $«v:self»  = bless {}, $«v:class»;
+
+    «t:my» $«v:has_been_called» = 0;
+
+    $«v:self»->{iter} = «k:sub» {
+        «k:if» ( !$«v:has_been_called» ) {
+            $«v:has_been_called» = 1;
+            «k:return» «s:'-'»;
+        }
+        «k:return»;
+    };
+
+    «k:return» $«v:self»;
+}
+
+«k:sub» «f:next» {
+    «t:my» $«v:self» = shift;
+
+    «t:my» $«v:file» = $«v:self»->{iter}->() or «k:return»;
+
+    «k:return» App::Ack::Resource::Basic->new( $«v:file» );
+}
+
+1;
+«k:package» «f:App»::Ack::Resource::Basic;
+
+
+«k:use» «c:warnings»;
+«k:use» «c:strict»;
+
+«k:use» «c:Fcntl» ();
+
+«k:BEGIN» {
+    our @«U:«v:ISA»» = «s:'App::Ack::Resource'»;
+}
+
+
+
+«k:sub» «f:new» {
+    «t:my» $«v:class»    = shift;
+    «t:my» $«v:filename» = shift;
+
+    «t:my» $«v:self» = bless {
+        filename => $«v:filename»,
+        fh       => undef,
+        opened   => 0,
+    }, $«v:class»;
+
+    «k:if» ( $«v:self»->{filename} eq «s:'-'» ) {
+        $«v:self»->{fh}     = *«v:STDIN»;
+        $«v:self»->{opened} = 1;
+    }
+
+    «k:return» $«v:self»;
+}
+
+
+«k:sub» «f:name» {
+    «k:return» $«v:_»[0]->{filename};
+}
+
+
+
+«k:sub» «f:needs_line_scan» {
+    «t:my» $«v:self»  = shift;
+    «t:my» $«v:opt»   = shift;
+
+    «k:return» 1 «k:if» $«v:opt»->{v};
+
+    «t:my» $«v:size» = -s $«v:self»->{fh};
+    «k:if» ( $«v:size» == 0 ) {
+        «k:return» 0;
+    }
+    «k:elsif» ( $«v:size» > 100_000 ) {
+        «k:return» 1;
+    }
+
+    «t:my» $«v:buffer»;
+    «t:my» $«v:rc» = sysread( $«v:self»->{fh}, $«v:buffer», $«v:size» );
+    «k:if» ( !defined($«v:rc») && $«v:App::Ack::report_bad_filenames» ) {
+        App::Ack::warn( «s:"$self->{filename}: $!"» );
+        «k:return» 1;
+    }
+    «k:return» 0 «k:unless» $«v:rc» && ( $«v:rc» == $«v:size» );
+
+    «t:my» $«v:regex» = $«v:opt»->{regex};
+    «k:return» $«v:buffer» =~ «s:/$regex/»m;
+}
+
+
+«k:sub» «f:reset» {
+    «t:my» $«v:self» = shift;
+
+    «x:# return if we haven't opened the file yet
+»    «k:if» ( !defined($«v:self»->{fh}) ) {
+        «k:return»;
+    }
+
+    «k:if»( !seek( $«v:self»->{fh}, 0, 0 ) && $«v:App::Ack::report_bad_filenames» ) {
+        App::Ack::warn( «s:"$self->{filename}: $!"» );
+    }
+
+    «k:return»;
+}
+
+
+«k:sub» «f:close» {
+    «t:my» $«v:self» = shift;
+
+    «x:# return if we haven't opened the file yet
+»    «k:if» ( !defined($«v:self»->{fh}) ) {
+        «k:return»;
+    }
+
+    «k:if» ( !close($«v:self»->{fh}) && $«v:App::Ack::report_bad_filenames» ) {
+        App::Ack::warn( $«v:self»->name() . «s:": $!"» );
+    }
+
+    $«v:self»->{opened} = 0;
+
+    «k:return»;
+}
+
+
+«k:sub» «f:clone» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «k:return» __PACKAGE__->new($«v:self»->name);
+}
+
+«k:sub» «f:firstliney» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «t:my» $«v:fh» = $«v:self»->open();
+
+    «k:if» ( !exists $«v:self»->{firstliney} ) {
+        «t:my» $«v:buffer» = «s:''»;
+        «t:my» $«v:rc»     = sysread( $«v:fh», $«v:buffer», 250 );
+        «k:unless»($«v:rc») { «x:# XXX handle this better?
+»            $«v:buffer» = «s:''»;
+        }
+        $«v:buffer» =~ s«s:/[\r\n].*//»s;
+        $«v:self»->{firstliney} = $«v:buffer»;
+        $«v:self»->reset;
+    }
+
+    $«v:self»->close;
+
+    «k:return» $«v:self»->{firstliney};
+}
+
+«k:sub» «f:open» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «k:return» $«v:self»->{fh} «k:if» $«v:self»->{opened};
+
+    «k:if» ( ! open $«v:self»->{fh}, «s:'<'», $«v:self»->{filename} ) {
+        «k:return»;
+    }
+
+    $«v:self»->{opened} = 1;
+
+    «k:return» $«v:self»->{fh};
+}
+
+1;
+«k:package» «f:App»::Ack::ConfigDefault;
+
+«k:use» «c:warnings»;
+«k:use» «c:strict»;
+
+
+
+«k:sub» «f:options» {
+    «k:return» split( «s:/\n/», _options_block() );
+}
+
+
+«k:sub» «f:options_clean» {
+    «k:return» grep { «s:/./» && !«s:/^#/» } options();
+}
+
+
+«k:sub» «f:_options_block» {
+    «t:my» $«v:lines» = <<«s:'HERE'»;«x:
+# This is the default ackrc for ack version ==VERSION==.
+
+# There are four different ways to match
+#
+# is:  Match the filename exactly
+#
+# ext: Match the extension of the filename exactly
+#
+# match: Match the filename against a Perl regular expression
+#
+# firstlinematch: Match the first 250 characters of the first line
+#   of text against a Perl regular expression.  This is only for
+#   the --type-add option.
+
+
+### Directories to ignore
+
+# Bazaar
+# http://bazaar.canonical.com/
+--ignore-directory=is:.bzr
+
+# Codeville
+# http://freecode.com/projects/codeville
+--ignore-directory=is:.cdv
+
+# Interface Builder (Xcode)
+# http://en.wikipedia.org/wiki/Interface_Builder
+--ignore-directory=is:~.dep
+--ignore-directory=is:~.dot
+--ignore-directory=is:~.nib
+--ignore-directory=is:~.plst
+
+# Git
+# http://git-scm.com/
+--ignore-directory=is:.git
+
+# Mercurial
+# http://mercurial.selenic.com/
+--ignore-directory=is:.hg
+
+# quilt
+# http://directory.fsf.org/wiki/Quilt
+--ignore-directory=is:.pc
+
+# Subversion
+# http://subversion.tigris.org/
+--ignore-directory=is:.svn
+
+# Monotone
+# http://www.monotone.ca/
+--ignore-directory=is:_MTN
+
+# CVS
+# http://savannah.nongnu.org/projects/cvs
+--ignore-directory=is:CVS
+
+# RCS
+# http://www.gnu.org/software/rcs/
+--ignore-directory=is:RCS
+
+# SCCS
+# http://en.wikipedia.org/wiki/Source_Code_Control_System
+--ignore-directory=is:SCCS
+
+# darcs
+# http://darcs.net/
+--ignore-directory=is:_darcs
+
+# Vault/Fortress
+--ignore-directory=is:_sgbak
+
+# autoconf
+# http://www.gnu.org/software/autoconf/
+--ignore-directory=is:autom4te.cache
+
+# Perl module building
+--ignore-directory=is:blib
+--ignore-directory=is:_build
+
+# Perl Devel::Cover module's output directory
+# https://metacpan.org/release/Devel-Cover
+--ignore-directory=is:cover_db
+
+# Node modules created by npm
+--ignore-directory=is:node_modules
+
+# CMake cache
+# http://www.cmake.org/
+--ignore-directory=is:CMakeFiles
+
+# Eclipse workspace folder
+# http://eclipse.org/
+--ignore-directory=is:.metadata
+
+# Cabal (Haskell) sandboxes
+# http://www.haskell.org/cabal/users-guide/installing-packages.html
+--ignore-directory=is:.cabal-sandbox
+
+### Files to ignore
+
+# Backup files
+--ignore-file=ext:bak
+--ignore-file=match:/~$/
+
+# Emacs swap files
+--ignore-file=match:/^#.+#$/
+
+# vi/vim swap files http://vim.org/
+--ignore-file=match:/[._].*\.swp$/
+
+# core dumps
+--ignore-file=match:/core\.\d+$/
+
+# minified Javascript
+--ignore-file=match:/[.-]min[.]js$/
+--ignore-file=match:/[.]js[.]min$/
+
+# minified CSS
+--ignore-file=match:/[.]min[.]css$/
+--ignore-file=match:/[.]css[.]min$/
+
+# JS and CSS source maps
+--ignore-file=match:/[.]js[.]map$/
+--ignore-file=match:/[.]css[.]map$/
+
+# PDFs, because they pass Perl's -T detection
+--ignore-file=ext:pdf
+
+# Common graphics, just as an optimization
+--ignore-file=ext:gif,jpg,jpeg,png
+
+
+### Filetypes defined
+
+# Perl
+# http://perl.org/
+--type-add=perl:ext:pl,pm,pod,t,psgi
+--type-add=perl:firstlinematch:/^#!.*\bperl/
+
+# Perl tests
+--type-add=perltest:ext:t
+
+# Makefiles
+# http://www.gnu.org/s/make/
+--type-add=make:ext:mk
+--type-add=make:ext:mak
+--type-add=make:is:makefile
+--type-add=make:is:Makefile
+--type-add=make:is:Makefile.Debug
+--type-add=make:is:Makefile.Release
+
+# Rakefiles
+# http://rake.rubyforge.org/
+--type-add=rake:is:Rakefile
+
+# CMake
+# http://www.cmake.org/
+--type-add=cmake:is:CMakeLists.txt
+--type-add=cmake:ext:cmake
+
+# Actionscript
+--type-add=actionscript:ext:as,mxml
+
+# Ada
+# http://www.adaic.org/
+--type-add=ada:ext:ada,adb,ads
+
+# ASP
+# http://msdn.microsoft.com/en-us/library/aa286483.aspx
+--type-add=asp:ext:asp
+
+# ASP.Net
+# http://www.asp.net/
+--type-add=aspx:ext:master,ascx,asmx,aspx,svc
+
+# Assembly
+--type-add=asm:ext:asm,s
+
+# Batch
+--type-add=batch:ext:bat,cmd
+
+# ColdFusion
+# http://en.wikipedia.org/wiki/ColdFusion
+--type-add=cfmx:ext:cfc,cfm,cfml
+
+# Clojure
+# http://clojure.org/
+--type-add=clojure:ext:clj
+
+# C
+# .xs are Perl C files
+--type-add=cc:ext:c,h,xs
+
+# C header files
+--type-add=hh:ext:h
+
+# CoffeeScript
+# http://coffeescript.org/
+--type-add=coffeescript:ext:coffee
+
+# C++
+--type-add=cpp:ext:cpp,cc,cxx,m,hpp,hh,h,hxx
+
+# C#
+--type-add=csharp:ext:cs
+
+# CSS
+# http://www.w3.org/Style/CSS/
+--type-add=css:ext:css
+
+# Dart
+# http://www.dartlang.org/
+--type-add=dart:ext:dart
+
+# Delphi
+# http://en.wikipedia.org/wiki/Embarcadero_Delphi
+--type-add=delphi:ext:pas,int,dfm,nfm,dof,dpk,dproj,groupproj,bdsgroup,bdsproj
+
+# Elixir
+# http://elixir-lang.org/
+--type-add=elixir:ext:ex,exs
+
+# Emacs Lisp
+# http://www.gnu.org/software/emacs
+--type-add=elisp:ext:el
+
+# Erlang
+# http://www.erlang.org/
+--type-add=erlang:ext:erl,hrl
+
+# Fortran
+# http://en.wikipedia.org/wiki/Fortran
+--type-add=fortran:ext:f,f77,f90,f95,f03,for,ftn,fpp
+
+# Go
+# http://golang.org/
+--type-add=go:ext:go
+
+# Groovy
+# http://groovy.codehaus.org/
+--type-add=groovy:ext:groovy,gtmpl,gpp,grunit,gradle
+
+# Haskell
+# http://www.haskell.org/
+--type-add=haskell:ext:hs,lhs
+
+# HTML
+--type-add=html:ext:htm,html
+
+# Jade
+# http://jade-lang.com/
+--type-add=jade:ext:jade
+
+# Java
+# http://www.oracle.com/technetwork/java/index.html
+--type-add=java:ext:java,properties
+
+# JavaScript
+--type-add=js:ext:js
+
+# JSP
+# http://www.oracle.com/technetwork/java/javaee/jsp/index.html
+--type-add=jsp:ext:jsp,jspx,jhtm,jhtml
+
+# JSON
+# http://www.json.org/
+--type-add=json:ext:json
+
+# Less
+# http://www.lesscss.org/
+--type-add=less:ext:less
+
+# Common Lisp
+# http://common-lisp.net/
+--type-add=lisp:ext:lisp,lsp
+
+# Lua
+# http://www.lua.org/
+--type-add=lua:ext:lua
+--type-add=lua:firstlinematch:/^#!.*\blua(jit)?/
+
+# Objective-C
+--type-add=objc:ext:m,h
+
+# Objective-C++
+--type-add=objcpp:ext:mm,h
+
+# OCaml
+# http://caml.inria.fr/
+--type-add=ocaml:ext:ml,mli
+
+# Matlab
+# http://en.wikipedia.org/wiki/MATLAB
+--type-add=matlab:ext:m
+
+# Parrot
+# http://www.parrot.org/
+--type-add=parrot:ext:pir,pasm,pmc,ops,pod,pg,tg
+
+# PHP
+# http://www.php.net/
+--type-add=php:ext:php,phpt,php3,php4,php5,phtml
+--type-add=php:firstlinematch:/^#!.*\bphp/
+
+# Plone
+# http://plone.org/
+--type-add=plone:ext:pt,cpt,metadata,cpy,py
+
+# Python
+# http://www.python.org/
+--type-add=python:ext:py
+--type-add=python:firstlinematch:/^#!.*\bpython/
+
+# R
+# http://www.r-project.org/
+--type-add=rr:ext:R
+
+# reStructured Text
+# http://docutils.sourceforge.net/rst.html
+--type-add=rst:ext:rst
+
+# Ruby
+# http://www.ruby-lang.org/
+--type-add=ruby:ext:rb,rhtml,rjs,rxml,erb,rake,spec
+--type-add=ruby:is:Rakefile
+--type-add=ruby:firstlinematch:/^#!.*\bruby/
+
+# Rust
+# http://www.rust-lang.org/
+--type-add=rust:ext:rs
+
+# Sass
+# http://sass-lang.com
+--type-add=sass:ext:sass,scss
+
+# Scala
+# http://www.scala-lang.org/
+--type-add=scala:ext:scala
+
+# Scheme
+# http://groups.csail.mit.edu/mac/projects/scheme/
+--type-add=scheme:ext:scm,ss
+
+# Shell
+--type-add=shell:ext:sh,bash,csh,tcsh,ksh,zsh,fish
+--type-add=shell:firstlinematch:/^#!.*\b(?:ba|t?c|k|z|fi)?sh\b/
+
+# Smalltalk
+# http://www.smalltalk.org/
+--type-add=smalltalk:ext:st
+
+# Smarty
+# http://www.smarty.net/
+--type-add=smarty:ext:tpl
+
+# SQL
+# http://www.iso.org/iso/catalogue_detail.htm?csnumber=45498
+--type-add=sql:ext:sql,ctl
+
+# Stylus
+# http://learnboost.github.io/stylus/
+--type-add=stylus:ext:styl
+
+# Tcl
+# http://www.tcl.tk/
+--type-add=tcl:ext:tcl,itcl,itk
+
+# LaTeX
+# http://www.latex-project.org/
+--type-add=tex:ext:tex,cls,sty
+
+# Template Toolkit (Perl)
+# http://template-toolkit.org/
+--type-add=tt:ext:tt,tt2,ttml
+
+# Visual Basic
+--type-add=vb:ext:bas,cls,frm,ctl,vb,resx
+
+# Verilog
+--type-add=verilog:ext:v,vh,sv
+
+# VHDL
+# http://www.eda.org/twiki/bin/view.cgi/P1076/WebHome
+--type-add=vhdl:ext:vhd,vhdl
+
+# Vim
+# http://www.vim.org/
+--type-add=vim:ext:vim
+
+# XML
+# http://www.w3.org/TR/REC-xml/
+--type-add=xml:ext:xml,dtd,xsl,xslt,ent
+--type-add=xml:firstlinematch:/<[?]xml/
+
+# YAML
+# http://yaml.org/
+--type-add=yaml:ext:yaml,yml
+HERE
+»    $«v:lines» =~ s«s:/==VERSION==/$App::Ack::VERSION/»sm;
+
+    «k:return» $«v:lines»;
+}
+
+1;
+«k:package» «f:App»::Ack::ConfigFinder;
+
+
+«k:use» «c:strict»;
+«k:use» «c:warnings»;
+
+«k:use» «c:Cwd» 3.00 ();
+«k:use» «c:File»::Spec 3.00;
+
+«k:use» «c:if» ($^O eq «s:'MSWin32'»), «s:'Win32'»;
+
+
+«k:sub» «f:new» {
+    «t:my» ( $«v:class» ) = @«U:«v:_»»;
+
+    «k:return» bless {}, $«v:class»;
+}
+
+
+«k:sub» «f:_remove_redundancies» {
+    «t:my» @«U:«v:configs»» = @«U:«v:_»»;
+
+    «t:my» %«U:«v:seen»»;
+    «k:foreach» «t:my» $«v:config» (@«U:«v:configs»») {
+        «t:my» $«v:key» = $«v:config»->{path};
+        «k:if» ( not $«v:App::Ack::is_windows» ) {
+            «x:# On Unix, uniquify on inode.
+»            «t:my» ($«v:dev», $«v:inode») = (stat $«v:key»)[0, 1];
+            $«v:key» = «s:"$dev:$inode"» «k:if» defined $«v:dev»;
+        }
+        undef $«v:config» «k:if» $«v:seen»{$«v:key»}++;
+    }
+    «k:return» grep { defined } @«U:«v:configs»»;
+}
+
+
+«k:sub» «f:_check_for_ackrc» {
+    «k:return» «k:unless» defined $«v:_»[0];
+
+    «t:my» @«U:«v:files»» = grep { -f }
+                map { File::Spec->catfile(@«U:«v:_»», $«v:_») }
+                qw«s:(.ackrc _ackrc)»;
+
+    «k:die» File::Spec->catdir(@«U:«v:_»») . «s:" contains both .ackrc and _ackrc.\n"» .
+        «s:"Please remove one of those files.\n"»
+            «k:if» @«U:«v:files»» > 1;
+
+    «k:return» wantarray ? @«U:«v:files»» : $«v:files»[0];
+} «x:# end _check_for_ackrc
+»
+
+
+«k:sub» «f:find_config_files» {
+    «t:my» @«U:«v:config_files»»;
+
+    «k:if» ( $«v:App::Ack::is_windows» ) {
+        push @«U:«v:config_files»», map { +{ path => File::Spec->catfile($«v:_», «s:'ackrc'») } } (
+            Win32::GetFolderPath(Win32::CSIDL_COMMON_APPDATA()),
+            Win32::GetFolderPath(Win32::CSIDL_APPDATA()),
+        );
+    }
+    «k:else» {
+        push @«U:«v:config_files»», { path => «s:'/etc/ackrc'» };
+    }
+
+
+    «k:if» ( $«v:ENV»{«s:'ACKRC'»} && -f $«v:ENV»{«s:'ACKRC'»} ) {
+        push @«U:«v:config_files»», { path => $«v:ENV»{«s:'ACKRC'»} };
+    }
+    «k:else» {
+        push @«U:«v:config_files»», map { +{ path => $«v:_» } } _check_for_ackrc($«v:ENV»{«s:'HOME'»});
+    }
+
+    «x:# XXX This should go through some untainted cwd-fetching function, and not get untainted inline like this.
+»    «t:my» $«v:cwd» = Cwd::getcwd();
+    $«v:cwd» =~ «s:/(.+)/»;
+    $«v:cwd» = $«v:1»;
+    «t:my» @«U:«v:dirs»» = File::Spec->splitdir( $«v:cwd» );
+    «k:while»(@«U:«v:dirs»») {
+        «t:my» $«v:ackrc» = _check_for_ackrc(@«U:«v:dirs»»);
+        «k:if»(defined $«v:ackrc») {
+            push @«U:«v:config_files»», { project => 1, path => $«v:ackrc» };
+            «k:last»;
+        }
+        pop @«U:«v:dirs»»;
+    }
+
+    «x:# We only test for existence here, so if the file is deleted out from under us, this will fail later.
+»    «k:return» _remove_redundancies( @«U:«v:config_files»» );
+}
+
+
+
+«k:sub» «f:read_rcfile» {
+    «t:my» $«v:file» = shift;
+
+    «k:return» «k:unless» defined $«v:file» && -e $«v:file»;
+
+    «t:my» @«U:«v:lines»»;
+
+    open( «t:my» $«v:fh», «s:'<'», $«v:file» ) or App::Ack::«k:die»( «s:"Unable to read $file: $!"» );
+    «k:while» ( «t:my» $«v:line» = <$«v:fh»> ) {
+        chomp $«v:line»;
+        $«v:line» =~ s«s:/^\s+//»;
+        $«v:line» =~ s«s:/\s+$//»;
+
+        «k:next» «k:if» $«v:line» eq «s:''»;
+        «k:next» «k:if» $«v:line» =~ «s:/^\s*#/»;
+
+        push( @«U:«v:lines»», $«v:line» );
+    }
+    close $«v:fh» or App::Ack::«k:die»( «s:"Unable to close $file: $!"» );
+
+    «k:return» @«U:«v:lines»»;
+}
+
+1;
+«k:package» «f:App»::Ack::ConfigLoader;
+
+«k:use» «c:strict»;
+«k:use» «c:warnings»;
+
+«k:use» «c:Carp» 1.04 ();
+«k:use» «c:Getopt»::Long 2.35 ();
+«k:use» «c:Text»::ParseWords 3.1 ();
+
+
+«t:my» @«U:«v:INVALID_COMBINATIONS»»;
+
+«k:BEGIN» {
+    «t:my» @«U:«v:context»»  = qw«s:( -A -B -C --after-context --before-context --context )»;
+    «t:my» @«U:«v:pretty»»   = qw«s:( --heading --group --break )»;
+    «t:my» @«U:«v:filename»» = qw«s:( -h -H --with-filename --no-filename )»;
+
+    @«U:«v:INVALID_COMBINATIONS»» = (
+        «x:# XXX normalize
+»        [qw«s:(-l)»]                 => [@«U:«v:context»», @«U:«v:pretty»», @«U:«v:filename»», qw«s:(-L -o --passthru --output --max-count --column -f -g --show-types)»],
+        [qw«s:(-L)»]                 => [@«U:«v:context»», @«U:«v:pretty»», @«U:«v:filename»», qw«s:(-l -o --passthru --output --max-count --column -f -g --show-types -c --count)»],
+        [qw«s:(--line)»]             => [@«U:«v:context»», @«U:«v:pretty»», @«U:«v:filename»», qw«s:(-l --files-with-matches --files-without-matches -L -o --passthru --match -m --max-count -1 -c --count --column --print0 -f -g --show-types)»],
+        [qw«s:(-o)»]                 => [@«U:«v:context»», qw«s:(--output -c --count --column --column -f --show-types)»],
+        [qw«s:(--passthru)»]         => [@«U:«v:context»», qw«s:(--output --column -m --max-count -1 -c --count -f -g)»],
+        [qw«s:(--output)»]           => [@«U:«v:context»», qw«s:(-c --count -f -g)»],
+        [qw«s:(--match)»]            => [qw«s:(-f -g)»],
+        [qw«s:(-m --max-count)»]     => [qw«s:(-1 -f -g -c --count)»],
+        [qw«s:(-h --no-filename)»]   => [qw«s:(-H --with-filename -f -g --group --heading)»],
+        [qw«s:(-H --with-filename)»] => [qw«s:(-h --no-filename -f -g)»],
+        [qw«s:(-c --count)»]         => [@«U:«v:context»», @«U:«v:pretty»», qw«s:(--column -f -g)»],
+        [qw«s:(--column)»]           => [qw«s:(-f -g)»],
+        [@«U:«v:context»»]               => [qw«s:(-f -g)»],
+        [qw«s:(-f)»]                 => [qw«s:(-g)», @«U:«v:pretty»»],
+        [qw«s:(-g)»]                 => [qw«s:(-f)», @«U:«v:pretty»»],
+    );
+}
+
+
+«k:sub» «f:process_filter_spec» {
+    «t:my» ( $«v:spec» ) = @«U:«v:_»»;
+
+    «k:if» ( $«v:spec» =~ «s:/^(\w+):(\w+):(.*)/» ) {
+        «t:my» ( $«v:type_name», $«v:ext_type», $«v:arguments» ) = ( $«v:1», $«v:2», $«v:3» );
+
+        «k:return» ( $«v:type_name»,
+            App::Ack::Filter->create_filter($«v:ext_type», split(«s:/,/», $«v:arguments»)) );
+    }
+    «k:elsif» ( $«v:spec» =~ «s:/^(\w+)=(.*)/» ) { «x:# Check to see if we have ack1-style argument specification.
+»        «t:my» ( $«v:type_name», $«v:extensions» ) = ( $«v:1», $«v:2» );
+
+        «t:my» @«U:«v:extensions»» = split(«s:/,/», $«v:extensions»);
+        «k:foreach» «t:my» $«v:extension» ( @«U:«v:extensions»» ) {
+            $«v:extension» =~ s«s:/^[.]//»;
+        }
+
+        «k:return» ( $«v:type_name», App::Ack::Filter->create_filter(«s:'ext'», @«U:«v:extensions»») );
+    }
+    «k:else» {
+        Carp::croak «s:"invalid filter specification '$spec'"»;
+    }
+}
+
+
+«k:sub» «f:uninvert_filter» {
+    «t:my» ( $«v:opt», @«U:«v:filters»» ) = @«U:«v:_»»;
+
+    «k:return» «k:unless» defined $«v:opt»->{filters} && @«U:«v:filters»»;
+
+    «x:# Loop through all the registered filters.  If we hit one that
+»    «x:# matches this extension and it's inverted, we need to delete it from
+»    «x:# the options.
+»    «k:for» ( «t:my» $«v:i» = 0; $«v:i» < @{ $«v:opt»->{filters} }; $«v:i»++ ) {
+        «t:my» $«v:opt_filter» = @{ $«v:opt»->{filters} }[$«v:i»];
+
+        «x:# XXX Do a real list comparison? This just checks string equivalence.
+»        «k:if» ( $«v:opt_filter»->is_inverted() && «s:"$opt_filter->{filter}"» eq «s:"@filters"» ) {
+            splice @{ $«v:opt»->{filters} }, $«v:i», 1;
+            $«v:i»--;
+        }
+    }
+}
+
+
+«k:sub» «f:process_filetypes» {
+    «t:my» ( $«v:opt», $«v:arg_sources» ) = @«U:«v:_»»;
+
+    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»); «x:# start with default options, minus some annoying ones
+»    Getopt::Long::Configure(
+        «s:'no_ignore_case'»,
+        «s:'no_auto_abbrev'»,
+        «s:'pass_through'»,
+    );
+    «t:my» %«U:«v:additional_specs»»;
+
+    «t:my» $«v:add_spec» = «k:sub» {
+        «t:my» ( undef, $«v:spec» ) = @«U:«v:_»»;
+
+        «t:my» ( $«v:name», $«v:filter» ) = process_filter_spec($«v:spec»);
+
+        push @{ $«v:App::Ack::mappings»{$«v:name»} }, $«v:filter»;
+
+        $«v:additional_specs»{$«v:name» . «s:'!'»} = «k:sub» {
+            «t:my» ( undef, $«v:value» ) = @«U:«v:_»»;
+
+            «t:my» @«U:«v:filters»» = @{ $«v:App::Ack::mappings»{$«v:name»} };
+            «k:if» ( not $«v:value» ) {
+                @«U:«v:filters»» = map { $«v:_»->invert() } @«U:«v:filters»»;
+            }
+            «k:else» {
+                uninvert_filter( $«v:opt», @«U:«v:filters»» );
+            }
+
+            push @{ $«v:opt»->{«s:'filters'»} }, @«U:«v:filters»»;
+        };
+    };
+
+    «t:my» $«v:set_spec» = «k:sub» {
+        «t:my» ( undef, $«v:spec» ) = @«U:«v:_»»;
+
+        «t:my» ( $«v:name», $«v:filter» ) = process_filter_spec($«v:spec»);
+
+        $«v:App::Ack::mappings»{$«v:name»} = [ $«v:filter» ];
+
+        $«v:additional_specs»{$«v:name» . «s:'!'»} = «k:sub» {
+            «t:my» ( undef, $«v:value» ) = @«U:«v:_»»;
+
+            «t:my» @«U:«v:filters»» = @{ $«v:App::Ack::mappings»{$«v:name»} };
+            «k:if» ( not $«v:value» ) {
+                @«U:«v:filters»» = map { $«v:_»->invert() } @«U:«v:filters»»;
+            }
+
+            push @{ $«v:opt»->{«s:'filters'»} }, @«U:«v:filters»»;
+        };
+    };
+
+    «t:my» $«v:delete_spec» = «k:sub» {
+        «t:my» ( undef, $«v:name» ) = @«U:«v:_»»;
+
+        delete $«v:App::Ack::mappings»{$«v:name»};
+        delete $«v:additional_specs»{$«v:name» . «s:'!'»};
+    };
+
+    «t:my» %«U:«v:type_arg_specs»» = (
+        «s:'type-add=s'» => $«v:add_spec»,
+        «s:'type-set=s'» => $«v:set_spec»,
+        «s:'type-del=s'» => $«v:delete_spec»,
+    );
+
+    «k:foreach» «t:my» $«v:source» (@{$«v:arg_sources»}) {
+        «t:my» ( $«v:source_name», $«v:args» ) = @{$«v:source»}{qw«s:/name contents/»};
+
+        «k:if» ( ref($«v:args») ) {
+            «x:# $args are modified in place, so no need to munge $arg_sources
+»            «t:local» @«U:«v:ARGV»» = @{$«v:args»};
+            Getopt::Long::GetOptions(%«U:«v:type_arg_specs»»);
+            @{$«v:args»} = @«U:«v:ARGV»»;
+        }
+        «k:else» {
+            ( undef, $«v:source»->{contents} ) =
+                Getopt::Long::GetOptionsFromString($«v:args», %«U:«v:type_arg_specs»»);
+        }
+    }
+
+    $«v:additional_specs»{«s:'k|known-types'»} = «k:sub» {
+        «t:my» ( undef, $«v:value» ) = @«U:«v:_»»;
+
+        «t:my» @«U:«v:filters»» = map { @{$«v:_»} } values(%«U:«v:App::Ack::mappings»»);
+
+        push @{ $«v:opt»->{«s:'filters'»} }, @«U:«v:filters»»;
+    };
+
+    «k:return» \%«U:«v:additional_specs»»;
+}
+
+
+«k:sub» «f:removed_option» {
+    «t:my» ( $«v:option», $«v:explanation» ) = @«U:«v:_»»;
+
+    $«v:explanation» ||= «s:''»;
+    «k:return» «k:sub» {
+        warn «s:"Option '$option' is not valid in ack 2\n$explanation"»;
+        «k:exit» 1;
+    };
+}
+
+
+«k:sub» «f:get_arg_spec» {
+    «t:my» ( $«v:opt», $«v:extra_specs» ) = @«U:«v:_»»;
+
+    «t:my» $«v:dash_a_explanation» = <<«s:'EOT'»;«x:
+This is because we now have -k/--known-types which makes it only select files
+of known types, rather than any text file (which is the behavior of ack 1.x).
+You may have options in a .ackrc, or in the ACKRC_OPTIONS environment variable.
+Try using the --dump flag.
+EOT
+»
+
+    «k:return» {
+        1                   => «k:sub» { $«v:opt»->{1} = $«v:opt»->{m} = 1 },
+        «s:'A|after-context=i'» => \$«v:opt»->{after_context},
+        «s:'B|before-context=i'»
+                            => \$«v:opt»->{before_context},
+        «s:'C|context:i'»       => «k:sub» { shift; «t:my» $«v:val» = shift; $«v:opt»->{before_context} = $«v:opt»->{after_context} = ($«v:val» || 2) },
+        «s:'a'»                 => removed_option(«s:'-a'», $«v:dash_a_explanation»),
+        «s:'all'»               => removed_option(«s:'--all'», $«v:dash_a_explanation»),
+        «s:'break!'»            => \$«v:opt»->{break},
+        c                   => \$«v:opt»->{count},
+        «s:'color|colour!'»     => \$«v:opt»->{color},
+        «s:'color-match=s'»     => \$«v:ENV»{ACK_COLOR_MATCH},
+        «s:'color-filename=s'»  => \$«v:ENV»{ACK_COLOR_FILENAME},
+        «s:'color-lineno=s'»    => \$«v:ENV»{ACK_COLOR_LINENO},
+        «s:'column!'»           => \$«v:opt»->{column},
+        count               => \$«v:opt»->{count},
+        «s:'create-ackrc'»      => «k:sub» { print «s:"$_\n"» «k:for» ( «s:'--ignore-ack-defaults'», App::Ack::ConfigDefault::options() ); «k:exit»; },
+        «s:'env!'»              => «k:sub» {
+            «t:my» ( undef, $«v:value» ) = @«U:«v:_»»;
+
+            «k:if» ( !$«v:value» ) {
+                $«v:opt»->{noenv_seen} = 1;
+            }
+        },
+        f                   => \$«v:opt»->{f},
+        «s:'files-from=s'»      => \$«v:opt»->{files_from},
+        «s:'filter!'»           => \$«v:App::Ack::is_filter_mode»,
+        flush               => \$«v:opt»->{flush},
+        «s:'follow!'»           => \$«v:opt»->{follow},
+        g                   => \$«v:opt»->{g},
+        G                   => removed_option(«s:'-G'»),
+        «s:'group!'»            => «k:sub» { shift; $«v:opt»->{heading} = $«v:opt»->{break} = shift },
+        «s:'heading!'»          => \$«v:opt»->{heading},
+        «s:'h|no-filename'»     => \$«v:opt»->{h},
+        «s:'H|with-filename'»   => \$«v:opt»->{H},
+        «s:'i|ignore-case'»     => \$«v:opt»->{i},
+        «s:'ignore-directory|ignore-dir=s'» => «k:sub» {
+                                    «t:my» ( undef, $«v:dir» ) = @«U:«v:_»»;
+
+                                    $«v:dir» = App::Ack::remove_dir_sep( $«v:dir» );
+                                    «k:if» ( $«v:dir» !~ «s:/^(?:is|match):/» ) {
+                                        $«v:dir» = «s:'is:'» . $«v:dir»;
+                                    }
+                                    push @{ $«v:opt»->{idirs} }, $«v:dir»;
+        },
+        «s:'ignore-file=s'»     => «k:sub» {
+                                    «t:my» ( undef, $«v:file» ) = @«U:«v:_»»;
+                                    push @{ $«v:opt»->{ifiles} }, $«v:file»;
+                               },
+        «s:'lines=s'»           => «k:sub» { shift; «t:my» $«v:val» = shift; push @{$«v:opt»->{lines}}, $«v:val» },
+        «s:'l|files-with-matches'»
+                            => \$«v:opt»->{l},
+        «s:'L|files-without-matches'»
+                            => \$«v:opt»->{L},
+        «s:'m|max-count=i'»     => \$«v:opt»->{m},
+        «s:'match=s'»           => \$«v:opt»->{regex},
+        «s:'n|no-recurse'»      => \$«v:opt»->{n},
+        o                   => «k:sub» { $«v:opt»->{output} = «s:'$&'» },
+        «s:'output=s'»          => \$«v:opt»->{output},
+        «s:'pager:s'»           => «k:sub» {
+            «t:my» ( undef, $«v:value» ) = @«U:«v:_»»;
+
+            $«v:opt»->{pager} = $«v:value» || $«v:ENV»{PAGER};
+        },
+        «s:'noignore-directory|noignore-dir=s'»
+                            => «k:sub» {
+                                «t:my» ( undef, $«v:dir» ) = @«U:«v:_»»;
+
+                                «x:# XXX can you do --noignore-dir=match,...?
+»                                $«v:dir» = App::Ack::remove_dir_sep( $«v:dir» );
+                                «k:if» ( $«v:dir» !~ «s:/^(?:is|match):/» ) {
+                                    $«v:dir» = «s:'is:'» . $«v:dir»;
+                                }
+                                «k:if» ( $«v:dir» !~ «s:/^(?:is|match):/» ) {
+                                    Carp::croak(«s:"invalid noignore-directory argument: '$dir'"»);
+                                }
+
+                                @{ $«v:opt»->{idirs} } = grep {
+                                    $«v:_» ne $«v:dir»
+                                } @{ $«v:opt»->{idirs} };
+
+                                push @{ $«v:opt»->{no_ignore_dirs} }, $«v:dir»;
+                            },
+        «s:'nopager'»           => «k:sub» { $«v:opt»->{pager} = undef },
+        «s:'passthru'»          => \$«v:opt»->{passthru},
+        «s:'print0'»            => \$«v:opt»->{print0},
+        «s:'Q|literal'»         => \$«v:opt»->{Q},
+        «s:'r|R|recurse'»       => «k:sub» { $«v:opt»->{n} = 0 },
+        «s:'s'»                 => \$«v:opt»->{dont_report_bad_filenames},
+        «s:'show-types'»        => \$«v:opt»->{show_types},
+        «s:'smart-case!'»       => \$«v:opt»->{smart_case},
+        «s:'sort-files'»        => \$«v:opt»->{sort_files},
+        «s:'type=s'»            => «k:sub» {
+            «t:my» ( $«v:getopt», $«v:value» ) = @«U:«v:_»»;
+
+            «t:my» $«v:cb_value» = 1;
+            «k:if» ( $«v:value» =~ s«s:/^no//» ) {
+                $«v:cb_value» = 0;
+            }
+
+            «t:my» $«v:callback» = $«v:extra_specs»->{ $«v:value» . «s:'!'» };
+
+            «k:if» ( $«v:callback» ) {
+                $«v:callback»->( $«v:getopt», $«v:cb_value» );
+            }
+            «k:else» {
+                Carp::croak( «s:"Unknown type '$value'"» );
+            }
+        },
+        «s:'u'»                 => removed_option(«s:'-u'»),
+        «s:'unrestricted'»      => removed_option(«s:'--unrestricted'»),
+        «s:'v|invert-match'»    => \$«v:opt»->{v},
+        «s:'w|word-regexp'»     => \$«v:opt»->{w},
+        «s:'x'»                 => «k:sub» { $«v:opt»->{files_from} = «s:'-'» },
+
+        «s:'version'»           => «k:sub» { App::Ack::print_version_statement(); «k:exit»; },
+        «s:'help|?:s'»          => «k:sub» { shift; App::Ack::show_help(@«U:«v:_»»); «k:exit»; },
+        «s:'help-types'»        => «k:sub» { App::Ack::show_help_types(); «k:exit»; },
+        «s:'man'»               => «k:sub» { App::Ack::show_man(); «k:exit»; },
+        $«v:extra_specs» ? %{$«v:extra_specs»} : (),
+    }; «x:# arg_specs
+»}
+
+
+«k:sub» «f:process_other» {
+    «t:my» ( $«v:opt», $«v:extra_specs», $«v:arg_sources» ) = @«U:«v:_»»;
+
+    «x:# Start with default options, minus some annoying ones.
+»    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»);
+    Getopt::Long::Configure(
+        «s:'bundling'»,
+        «s:'no_ignore_case'»,
+    );
+
+    «t:my» $«v:argv_source»;
+    «t:my» $«v:is_help_types_active»;
+
+    «k:foreach» «t:my» $«v:source» (@{$«v:arg_sources»}) {
+        «t:my» ( $«v:source_name», $«v:args» ) = @{$«v:source»}{qw«s:/name contents/»};
+
+        «k:if» ( $«v:source_name» eq «s:'ARGV'» ) {
+            $«v:argv_source» = $«v:args»;
+            «k:last»;
+        }
+    }
+
+    «k:if» ( $«v:argv_source» ) { «x:# This *should* always be true, but you never know...
+»        «t:my» @«U:«v:copy»» = @{$«v:argv_source»};
+        «t:local» @«U:«v:ARGV»» = @«U:«v:copy»»;
+
+        Getopt::Long::Configure(«s:'pass_through'»);
+
+        Getopt::Long::GetOptions(
+            «s:'help-types'» => \$«v:is_help_types_active»,
+        );
+
+        Getopt::Long::Configure(«s:'no_pass_through'»);
+    }
+
+    «t:my» $«v:arg_specs» = get_arg_spec($«v:opt», $«v:extra_specs»);
+
+    «k:foreach» «t:my» $«v:source» (@{$«v:arg_sources»}) {
+        «t:my» ( $«v:source_name», $«v:args» ) = @{$«v:source»}{qw«s:/name contents/»};
+
+        «t:my» $«v:args_for_source» = $«v:arg_specs»;
+
+        «k:if» ( $«v:source»->{project} ) {
+            «t:my» $«v:illegal» = «k:sub» {
+                «k:die» «s:"Options --output, --pager and --match are forbidden in project .ackrc files.\n"»;
+            };
+
+            $«v:args_for_source» = { %$«v:args_for_source»,
+                «s:'output=s'» => $«v:illegal»,
+                «s:'pager:s'»  => $«v:illegal»,
+                «s:'match=s'»  => $«v:illegal»,
+            };
+        }
+
+        «t:my» $«v:ret»;
+        «k:if» ( ref($«v:args») ) {
+            «t:local» @«U:«v:ARGV»» = @{$«v:args»};
+            $«v:ret» = Getopt::Long::GetOptions( %{$«v:args_for_source»} );
+            @{$«v:args»} = @«U:«v:ARGV»»;
+        }
+        «k:else» {
+            ( $«v:ret», $«v:source»->{contents} ) =
+                Getopt::Long::GetOptionsFromString( $«v:args», %{$«v:args_for_source»} );
+        }
+        «k:if» ( !$«v:ret» ) {
+            «k:if» ( !$«v:is_help_types_active» ) {
+                «t:my» $«v:where» = $«v:source_name» eq «s:'ARGV'» ? «s:'on command line'» : «s:"in $source_name"»;
+                App::Ack::«k:die»( «s:"Invalid option $where"» );
+            }
+        }
+        «k:if» ( $«v:opt»->{noenv_seen} ) {
+            App::Ack::«k:die»( «s:"--noenv found in $source_name"» );
+        }
+    }
+
+    «x:# XXX We need to check on a -- in the middle of a non-ARGV source
+»
+    «k:return»;
+}
+
+
+«k:sub» «f:should_dump_options» {
+    «t:my» ( $«v:sources» ) = @«U:«v:_»»;
+
+    «k:foreach» «t:my» $«v:source» (@{$«v:sources»}) {
+        «t:my» ( $«v:name», $«v:options» ) = @{$«v:source»}{qw«s:/name contents/»};
+
+        «k:if»($«v:name» eq «s:'ARGV'») {
+            «t:my» $«k:dump»;
+            «t:local» @«U:«v:ARGV»» = @{$«v:options»};
+            Getopt::Long::Configure(«s:'default'», «s:'pass_through'», «s:'no_auto_help'», «s:'no_auto_version'»);
+            Getopt::Long::GetOptions(
+                «s:'dump'» => \$«k:dump»,
+            );
+            @{$«v:options»} = @«U:«v:ARGV»»;
+            «k:return» $«k:dump»;
+        }
+    }
+    «k:return»;
+}
+
+
+«k:sub» «f:explode_sources» {
+    «t:my» ( $«v:sources» ) = @«U:«v:_»»;
+
+    «t:my» @«U:«v:new_sources»»;
+
+    Getopt::Long::Configure(«s:'default'», «s:'pass_through'», «s:'no_auto_help'», «s:'no_auto_version'»);
+
+    «t:my» %«U:«v:opt»»;
+    «t:my» $«v:arg_spec» = get_arg_spec(\%«U:«v:opt»»);
+
+    «t:my» $«v:add_type» = «k:sub» {
+        «t:my» ( undef, $«v:arg» ) = @«U:«v:_»»;
+
+        «x:# XXX refactor?
+»        «k:if» ( $«v:arg» =~ «s:/(\w+)=/») {
+            $«v:arg_spec»->{$«v:1»} = «k:sub» {};
+        }
+        «k:else» {
+            ( $«v:arg» ) = split «s:/:/», $«v:arg»;
+            $«v:arg_spec»->{$«v:arg»} = «k:sub» {};
+        }
+    };
+
+    «t:my» $«v:del_type» = «k:sub» {
+        «t:my» ( undef, $«v:arg» ) = @«U:«v:_»»;
+
+        delete $«v:arg_spec»->{$«v:arg»};
+    };
+
+    «k:foreach» «t:my» $«v:source» (@{$«v:sources»}) {
+        «t:my» ( $«v:name», $«v:options» ) = @{$«v:source»}{qw«s:/name contents/»};
+        «k:if» ( ref($«v:options») ne «s:'ARRAY'» ) {
+            $«v:source»->{contents} = $«v:options» =
+                [ Text::ParseWords::shellwords($«v:options») ];
+        }
+
+        «k:for» «t:my» $«v:j» ( 0 .. @{$«v:options»}-1 ) {
+            «k:next» «k:unless» $«v:options»->[$«v:j»] =~ «s:/^-/»;
+            «t:my» @«U:«v:chunk»» = ( $«v:options»->[$«v:j»] );
+            push @«U:«v:chunk»», $«v:options»->[$«v:j»] «k:while» ++$«v:j» < @{$«v:options»} && $«v:options»->[$«v:j»] !~ «s:/^-/»;
+            $«v:j»--;
+
+            «t:my» @«U:«v:copy»» = @«U:«v:chunk»»;
+            «t:local» @«U:«v:ARGV»» = @«U:«v:chunk»»;
+            Getopt::Long::GetOptions(
+                «s:'type-add=s'» => $«v:add_type»,
+                «s:'type-set=s'» => $«v:add_type»,
+                «s:'type-del=s'» => $«v:del_type»,
+            );
+            Getopt::Long::GetOptions( %{$«v:arg_spec»} );
+
+            push @«U:«v:new_sources»», {
+                name     => $«v:name»,
+                contents => \@«U:«v:copy»»,
+            };
+        }
+    }
+
+    «k:return» \@«U:«v:new_sources»»;
+}
+
+
+«k:sub» «f:compare_opts» {
+    «t:my» ( $«v:a», $«v:b» ) = @«U:«v:_»»;
+
+    «t:my» $«v:first_a» = $«v:a»->[0];
+    «t:my» $«v:first_b» = $«v:b»->[0];
+
+    $«v:first_a» =~ s«s:/^--?//»;
+    $«v:first_b» =~ s«s:/^--?//»;
+
+    «k:return» $«v:first_a» cmp $«v:first_b»;
+}
+
+
+«k:sub» «f:dump_options» {
+    «t:my» ( $«v:sources» ) = @«U:«v:_»»;
+
+    $«v:sources» = explode_sources($«v:sources»);
+
+    «t:my» %«U:«v:opts_by_source»»;
+    «t:my» @«U:«v:source_names»»;
+
+    «k:foreach» «t:my» $«v:source» (@{$«v:sources»}) {
+        «t:my» ( $«v:name», $«v:contents» ) = @{$«v:source»}{qw«s:/name contents/»};
+        «k:if» ( not $«v:opts_by_source»{$«v:name»} ) {
+            $«v:opts_by_source»{$«v:name»} = [];
+            push @«U:«v:source_names»», $«v:name»;
+        }
+        push @{$«v:opts_by_source»{$«v:name»}}, $«v:contents»;
+    }
+
+    «k:foreach» «t:my» $«v:name» (@«U:«v:source_names»») {
+        «t:my» $«v:contents» = $«v:opts_by_source»{$«v:name»};
+
+        print $«v:name», «s:"\n"»;
+        print «s:'='» x length($«v:name»), «s:"\n"»;
+        print «s:'  '», join(«s:' '», @{$«v:_»}), «s:"\n"» «k:foreach» sort { compare_opts($«v:a», $«v:b») } @{$«v:contents»};
+    }
+
+    «k:return»;
+}
+
+
+«k:sub» «f:remove_default_options_if_needed» {
+    «t:my» ( $«v:sources» ) = @«U:«v:_»»;
+
+    «t:my» $«v:default_index»;
+
+    «k:foreach» «t:my» $«v:index» ( 0 .. $#{$«v:sources»} ) {
+        «k:if» ( $«v:sources»->[$«v:index»]{«s:'name'»} eq «s:'Defaults'» ) {
+            $«v:default_index» = $«v:index»;
+            «k:last»;
+        }
+    }
+
+    «k:return» $«v:sources» «k:unless» defined $«v:default_index»;
+
+    «t:my» $«v:should_remove» = 0;
+
+    «x:# Start with default options, minus some annoying ones.
+»    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»);
+    Getopt::Long::Configure(
+        «s:'no_ignore_case'»,
+        «s:'no_auto_abbrev'»,
+        «s:'pass_through'»,
+    );
+
+    «k:foreach» «t:my» $«v:index» ( $«v:default_index» + 1 .. $#{$«v:sources»} ) {
+        «t:my» ( $«v:name», $«v:args» ) = @{$«v:sources»->[$«v:index»]}{qw«s:/name contents/»};
+
+        «k:if» (ref($«v:args»)) {
+            «t:local» @«U:«v:ARGV»» = @{$«v:args»};
+            Getopt::Long::GetOptions(
+                «s:'ignore-ack-defaults'» => \$«v:should_remove»,
+            );
+            @{$«v:args»} = @«U:«v:ARGV»»;
+        }
+        «k:else» {
+            ( undef, $«v:sources»->[$«v:index»]{contents} ) = Getopt::Long::GetOptionsFromString($«v:args»,
+                «s:'ignore-ack-defaults'» => \$«v:should_remove»,
+            );
+        }
+    }
+
+    Getopt::Long::Configure(«s:'default'»);
+    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»);
+
+    «k:return» $«v:sources» «k:unless» $«v:should_remove»;
+
+    «t:my» @«U:«v:copy»» = @{$«v:sources»};
+    splice @«U:«v:copy»», $«v:default_index», 1;
+    «k:return» \@«U:«v:copy»»;
+}
+
+
+«k:sub» «f:check_for_mutually_exclusive_options» {
+    «t:my» ( $«v:arg_sources» ) = @«U:«v:_»»;
+
+    «t:my» %«U:«v:mutually_exclusive_with»»;
+    «t:my» @«U:«v:copy»» = @{$«v:arg_sources»};
+
+    «k:for»(«t:my» $«v:i» = 0; $«v:i» < @«U:«v:INVALID_COMBINATIONS»»; $«v:i» += 2) {
+        «t:my» ( $«v:lhs», $«v:rhs» ) = @«U:«v:INVALID_COMBINATIONS»»[ $«v:i», $«v:i» + 1 ];
+
+        «k:foreach» «t:my» $«v:l_opt» ( @{$«v:lhs»} ) {
+            «k:foreach» «t:my» $«v:r_opt» ( @{$«v:rhs»} ) {
+                push @{ $«v:mutually_exclusive_with»{ $«v:l_opt» } }, $«v:r_opt»;
+                push @{ $«v:mutually_exclusive_with»{ $«v:r_opt» } }, $«v:l_opt»;
+            }
+        }
+    }
+
+    «k:while»( @«U:«v:copy»» ) {
+        «t:my» %«U:«v:set_opts»»;
+
+        «t:my» $«v:source» = shift @«U:«v:copy»»;
+        «t:my» ( $«v:source_name», $«v:args» ) = @{$«v:source»}{qw«s:/name contents/»};
+        $«v:args» = ref($«v:args») ? [ @{$«v:args»} ] : [ Text::ParseWords::shellwords($«v:args») ];
+
+        «k:foreach» «t:my» $«v:opt» ( @{$«v:args»} ) {
+            «k:next» «k:unless» $«v:opt» =~ «s:/^[-+]/»;
+            «k:last» «k:if» $«v:opt» eq «s:'--'»;
+
+            «k:if»( $«v:opt» =~ «s:/^(.*)=/» ) {
+                $«v:opt» = $«v:1»;
+            }
+            «k:elsif» ( $«v:opt» =~ «s:/^(-[^-]).+/» ) {
+                $«v:opt» = $«v:1»;
+            }
+
+            $«v:set_opts»{ $«v:opt» } = 1;
+
+            «t:my» $«v:mutex_opts» = $«v:mutually_exclusive_with»{ $«v:opt» };
+
+            «k:next» «k:unless» $«v:mutex_opts»;
+
+            «k:foreach» «t:my» $«v:mutex_opt» ( @{$«v:mutex_opts»} ) {
+                «k:if»($«v:set_opts»{ $«v:mutex_opt» }) {
+                    «k:die» «s:"Options '$mutex_opt' and '$opt' are mutually exclusive\n"»;
+                }
+            }
+        }
+    }
+}
+
+
+«k:sub» «f:process_args» {
+    «t:my» $«v:arg_sources» = \@«U:«v:_»»;
+
+    «t:my» %«U:«v:opt»» = (
+        pager => $«v:ENV»{ACK_PAGER_COLOR} || $«v:ENV»{ACK_PAGER},
+    );
+
+    check_for_mutually_exclusive_options($«v:arg_sources»);
+
+    $«v:arg_sources» = remove_default_options_if_needed($«v:arg_sources»);
+
+    «k:if» ( should_dump_options($«v:arg_sources») ) {
+        dump_options($«v:arg_sources»);
+        «k:exit»(0);
+    }
+
+    «t:my» $«v:type_specs» = process_filetypes(\%«U:«v:opt»», $«v:arg_sources»);
+    process_other(\%«U:«v:opt»», $«v:type_specs», $«v:arg_sources»);
+    «k:while» ( @{$«v:arg_sources»} ) {
+        «t:my» $«v:source» = shift @{$«v:arg_sources»};
+        «t:my» ( $«v:source_name», $«v:args» ) = @{$«v:source»}{qw«s:/name contents/»};
+
+        «x:# All of our sources should be transformed into an array ref
+»        «k:if» ( ref($«v:args») ) {
+            «k:if» ( $«v:source_name» eq «s:'ARGV'» ) {
+                @«U:«v:ARGV»» = @{$«v:args»};
+            }
+            «k:elsif» (@{$«v:args»}) {
+                Carp::croak «s:"source '$source_name' has extra arguments!"»;
+            }
+        }
+        «k:else» {
+            Carp::croak «s:'The impossible has occurred!'»;
+        }
+    }
+    «t:my» $«v:filters» = ($«v:opt»{filters} ||= []);
+
+    «x:# Throw the default filter in if no others are selected.
+»    «k:if» ( not grep { !$«v:_»->is_inverted() } @{$«v:filters»} ) {
+        push @{$«v:filters»}, App::Ack::Filter::Default->new();
+    }
+    «k:return» \%«U:«v:opt»»;
+}
+
+
+«k:sub» «f:retrieve_arg_sources» {
+    «t:my» @«U:«v:arg_sources»»;
+
+    «t:my» $«v:noenv»;
+    «t:my» $«v:ackrc»;
+
+    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»);
+    Getopt::Long::Configure(«s:'pass_through'»);
+    Getopt::Long::Configure(«s:'no_auto_abbrev'»);
+
+    Getopt::Long::GetOptions(
+        «s:'noenv'»   => \$«v:noenv»,
+        «s:'ackrc=s'» => \$«v:ackrc»,
+    );
+
+    Getopt::Long::Configure(«s:'default'», «s:'no_auto_help'», «s:'no_auto_version'»);
+
+    «t:my» @«U:«v:files»»;
+
+    «k:if» ( !$«v:noenv» ) {
+        «t:my» $«v:finder» = App::Ack::ConfigFinder->new;
+        @«U:«v:files»»  = $«v:finder»->find_config_files;
+    }
+    «k:if» ( $«v:ackrc» ) {
+        «x:# We explicitly use open so we get a nice error message.
+»        «x:# XXX This is a potential race condition!.
+»        «k:if»(open «t:my» $«v:fh», «s:'<'», $«v:ackrc») {
+            close $«v:fh»;
+        }
+        «k:else» {
+            «k:die» «s:"Unable to load ackrc '$ackrc': $!"»
+        }
+        push( @«U:«v:files»», { path => $«v:ackrc» } );
+    }
+
+    push @«U:«v:arg_sources»», {
+        name     => «s:'Defaults'»,
+        contents => [ App::Ack::ConfigDefault::options_clean() ],
+    };
+
+    «k:foreach» «t:my» $«v:file» ( @«U:«v:files»») {
+        «t:my» @«U:«v:lines»» = App::Ack::ConfigFinder::read_rcfile($«v:file»->{path});
+
+        «k:if»(@«U:«v:lines»») {
+            push @«U:«v:arg_sources»», {
+                name     => $«v:file»->{path},
+                contents => \@«U:«v:lines»»,
+                project  => $«v:file»->{project},
+            };
+        }
+    }
+
+    «k:if» ( $«v:ENV»{ACK_OPTIONS} && !$«v:noenv» ) {
+        push @«U:«v:arg_sources»», {
+            name     => «s:'ACK_OPTIONS'»,
+            contents => $«v:ENV»{ACK_OPTIONS},
+        };
+    }
+
+    push @«U:«v:arg_sources»», {
+        name     => «s:'ARGV'»,
+        contents => [ @«U:«v:ARGV»» ],
+    };
+
+    «k:return» @«U:«v:arg_sources»»;
+}
+
+1; «x:# End of App::Ack::ConfigLoader
+»«k:package» «f:App»::Ack::Filter;
+
+«k:use» «c:strict»;
+«k:use» «c:warnings»;
+«k:use» «c:overload»
+    «s:'""'» => «s:'to_string'»;
+
+«k:use» «c:Carp» 1.04 ();
+
+«t:my» %«U:«v:filter_types»»;
+
+
+«k:sub» «f:create_filter» {
+    «t:my» ( undef, $«v:type», @«U:«v:args»» ) = @«U:«v:_»»;
+
+    «k:if» ( «t:my» $«k:package» = $«v:filter_types»{$«v:type»} ) {
+        «k:return» $«k:package»->new(@«U:«v:args»»);
+    }
+    Carp::croak «s:"Unknown filter type '$type'"»;
+}
+
+
+«k:sub» «f:register_filter» {
+    «t:my» ( undef, $«v:type», $«k:package» ) = @«U:«v:_»»;
+
+    $«v:filter_types»{$«v:type»} = $«k:package»;
+
+    «k:return»;
+}
+
+
+«k:sub» «f:invert» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «k:return» App::Ack::Filter::Inverse->new( $«v:self» );
+}
+
+
+«k:sub» «f:is_inverted» {
+    «k:return» 0;
+}
+
+
+«k:sub» «f:to_string» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «k:return» «s:'(unimplemented to_string)'»;
+}
+
+
+«k:sub» «f:inspect» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «k:return» ref($«v:self»);
+}
+
+1;
+«k:package» «f:App»::Ack::Filter::Extension;
+
+«k:use» «c:strict»;
+«k:use» «c:warnings»;
+«k:BEGIN» {
+    our @«U:«v:ISA»» = «s:'App::Ack::Filter'»;
+}
+
+
+«k:sub» «f:new» {
+    «t:my» ( $«v:class», @«U:«v:extensions»» ) = @«U:«v:_»»;
+
+    «t:my» $«v:exts» = join(«s:'|'», map { «s:"\Q$_\E"»} @«U:«v:extensions»»);
+    «t:my» $«v:re»   = qr«s:/[.](?:$exts)$/»i;
+
+    «k:return» bless {
+        extensions => \@«U:«v:extensions»»,
+        regex      => $«v:re»,
+        groupname  => «s:'ExtensionGroup'»,
+    }, $«v:class»;
+}
+
+«k:sub» «f:create_group» {
+    «k:return» App::Ack::Filter::ExtensionGroup->new();
+}
+
+«k:sub» «f:filter» {
+    «t:my» ( $«v:self», $«v:resource» ) = @«U:«v:_»»;
+
+    «t:my» $«v:re» = $«v:self»->{«s:'regex'»};
+
+    «k:return» $«v:resource»->name =~ «s:/$re/»;
+}
+
+«k:sub» «f:inspect» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «t:my» $«v:re» = $«v:self»->{«s:'regex'»};
+
+    «k:return» ref($«v:self») . «s:" - $re"»;
+}
+
+«k:sub» «f:to_string» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «t:my» $«v:exts» = $«v:self»->{«s:'extensions'»};
+
+    «k:return» join(«s:' '», map { «s:".$_"» } @{$«v:exts»});
+}
+
+«k:BEGIN» {
+    App::Ack::Filter->register_filter(ext => __PACKAGE__);
+}
+
+1;
+«k:package» «f:App»::Ack::Filter::FirstLineMatch;
+
+«k:use» «c:strict»;
+«k:use» «c:warnings»;
+«k:BEGIN» {
+    our @«U:«v:ISA»» = «s:'App::Ack::Filter'»;
+}
+
+«k:sub» «f:new» {
+    «t:my» ( $«v:class», $«v:re» ) = @«U:«v:_»»;
+
+    $«v:re» =~ s«s:{^/|/$}{}»g; «x:# XXX validate?
+»    $«v:re» = qr«s:{$re}»i;
+
+    «k:return» bless {
+        regex => $«v:re»,
+    }, $«v:class»;
+}
+
+«m:# »«x:This test reads the first 250 characters of a file, then just uses the
+»«m:# »«x:first line found in that. This prevents reading something  like an entire
+»«m:# »«x:.min.js file (which might be only one "line" long) into memory.
+»
+«k:sub» «f:filter» {
+    «t:my» ( $«v:self», $«v:resource» ) = @«U:«v:_»»;
+
+    «t:my» $«v:re» = $«v:self»->{«s:'regex'»};
+
+    «t:my» $«v:line» = $«v:resource»->firstliney;
+
+    «k:return» $«v:line» =~ «s:/$re/»;
+}
+
+«k:sub» «f:inspect» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «t:my» $«v:re» = $«v:self»->{«s:'regex'»};
+
+    «k:return» ref($«v:self») . «s:" - $re"»;
+}
+
+«k:sub» «f:to_string» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    («t:my» $«v:re» = $«v:self»->{regex}) =~ s«s:{\([^:]*:(.*)\)$}{$1}»;
+
+    «k:return» «s:"first line matches /$re/"»;
+}
+
+«k:BEGIN» {
+    App::Ack::Filter->register_filter(firstlinematch => __PACKAGE__);
+}
+
+1;
+«k:package» «f:App»::Ack::Filter::Is;
+
+«k:use» «c:strict»;
+«k:use» «c:warnings»;
+«k:BEGIN» {
+    our @«U:«v:ISA»» = «s:'App::Ack::Filter'»;
+}
+
+«k:use» «c:File»::Spec 3.00 ();
+
+«k:sub» «f:new» {
+    «t:my» ( $«v:class», $«v:filename» ) = @«U:«v:_»»;
+
+    «k:return» bless {
+        filename => $«v:filename»,
+        groupname => «s:'IsGroup'»,
+    }, $«v:class»;
+}
+
+«k:sub» «f:create_group» {
+    «k:return» App::Ack::Filter::IsGroup->new();
+}
+
+«k:sub» «f:filter» {
+    «t:my» ( $«v:self», $«v:resource» ) = @«U:«v:_»»;
+
+    «t:my» $«v:filename» = $«v:self»->{«s:'filename'»};
+    «t:my» $«v:base»     = (File::Spec->splitpath($«v:resource»->name))[2];
+
+    «k:return» $«v:base» eq $«v:filename»;
+}
+
+«k:sub» «f:inspect» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «t:my» $«v:filename» = $«v:self»->{«s:'filename'»};
+
+    «k:return» ref($«v:self») . «s:" - $filename"»;
+}
+
+«k:sub» «f:to_string» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «t:my» $«v:filename» = $«v:self»->{«s:'filename'»};
+
+    «k:return» $«v:filename»;
+}
+
+«k:BEGIN» {
+    App::Ack::Filter->register_filter(is => __PACKAGE__);
+}
+
+1;
+«k:package» «f:App»::Ack::Filter::Match;
+
+«k:use» «c:strict»;
+«k:use» «c:warnings»;
+«k:BEGIN» {
+    our @«U:«v:ISA»» = «s:'App::Ack::Filter'»;
+}
+
+«k:use» «c:File»::Spec 3.00;
+
+«k:sub» «f:new» {
+    «t:my» ( $«v:class», $«v:re» ) = @«U:«v:_»»;
+
+    $«v:re» =~ s«s:{^/|/$}{}»g; «x:# XXX validate?
+»    $«v:re» = qr«s:/$re/»i;
+
+    «k:return» bless {
+        regex => $«v:re»,
+    }, $«v:class»;
+}
+
+«k:sub» «f:filter» {
+    «t:my» ( $«v:self», $«v:resource» ) = @«U:«v:_»»;
+
+    «t:my» $«v:re»   = $«v:self»->{«s:'regex'»};
+    «t:my» $«v:base» = (File::Spec->splitpath($«v:resource»->name))[2];
+
+    «k:return» $«v:base» =~ «s:/$re/»;
+}
+
+«k:sub» «f:inspect» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «t:my» $«v:re» = $«v:self»->{«s:'regex'»};
+
+    print ref($«v:self») . «s:" - $re"»;
+
+    «k:return»;
+}
+
+«k:sub» «f:to_string» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «t:my» $«v:re» = $«v:self»->{«s:'regex'»};
+
+    «k:return» «s:"filename matches $re"»;
+}
+
+«k:BEGIN» {
+    App::Ack::Filter->register_filter(match => __PACKAGE__);
+}
+
+1;
+«k:package» «f:App»::Ack::Filter::Default;
+
+«k:use» «c:strict»;
+«k:use» «c:warnings»;
+«k:BEGIN» {
+    our @«U:«v:ISA»» = «s:'App::Ack::Filter'»;
+}
+
+«k:sub» «f:new» {
+    «t:my» ( $«v:class» ) = @«U:«v:_»»;
+
+    «k:return» bless {}, $«v:class»;
+}
+
+«k:sub» «f:filter» {
+    «t:my» ( $«v:self», $«v:resource» ) = @«U:«v:_»»;
+
+    «k:return» -T $«v:resource»->name;
+}
+
+1;
+«k:package» «f:App»::Ack::Filter::Inverse;
+
+«k:use» «c:strict»;
+«k:use» «c:warnings»;
+«k:BEGIN» {
+    our @«U:«v:ISA»» = «s:'App::Ack::Filter'»;
+}
+
+«k:sub» «f:new» {
+    «t:my» ( $«v:class», $«v:filter» ) = @«U:«v:_»»;
+
+    «k:return» bless {
+        filter => $«v:filter»,
+    }, $«v:class»;
+}
+
+«k:sub» «f:filter» {
+    «t:my» ( $«v:self», $«v:resource» ) = @«U:«v:_»»;
+
+    «t:my» $«v:filter» = $«v:self»->{«s:'filter'»};
+    «k:return» !$«v:filter»->filter( $«v:resource» );
+}
+
+«k:sub» «f:invert» {
+    «t:my» $«v:self» = shift;
+
+    «k:return» $«v:self»->{«s:'filter'»};
+}
+
+«k:sub» «f:is_inverted» {
+    «k:return» 1;
+}
+
+«k:sub» «f:inspect» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «t:my» $«v:filter» = $«v:self»->{«s:'filter'»};
+
+    «k:return» «s:"!$filter"»;
+}
+
+1;
+«k:package» «f:App»::Ack::Filter::Collection;
+
+«k:use» «c:strict»;
+«k:use» «c:warnings»;
+«k:BEGIN» {
+    our @«U:«v:ISA»» = «s:'App::Ack::Filter'»;
+}
+
+«k:sub» «f:new» {
+    «t:my» ( $«v:class» ) = @«U:«v:_»»;
+
+    «k:return» bless {
+        groups => {},
+        ungrouped => [],
+    }, $«v:class»;
+}
+
+«k:sub» «f:filter» {
+    «t:my» ( $«v:self», $«v:resource» ) = @«U:«v:_»»;
+
+    «k:for» «t:my» $«v:group» (values %{$«v:self»->{«s:'groups'»}}) {
+        «k:if» ($«v:group»->filter($«v:resource»)) {
+            «k:return» 1;
+        }
+    }
+
+    «k:for» «t:my» $«v:filter» (@{$«v:self»->{«s:'ungrouped'»}}) {
+        «k:if» ($«v:filter»->filter($«v:resource»)) {
+            «k:return» 1;
+        }
+    }
+
+    «k:return» 0;
+}
+
+«k:sub» «f:add» {
+    «t:my» ( $«v:self», $«v:filter» ) = @«U:«v:_»»;
+
+    «k:if» (exists $«v:filter»->{«s:'groupname'»}) {
+        «t:my» $«v:group» = ($«v:self»->{groups}->{$«v:filter»->{groupname}} ||= $«v:filter»->create_group());
+        $«v:group»->add($«v:filter»);
+    }
+    «k:else» {
+        push @{$«v:self»->{«s:'ungrouped'»}}, $«v:filter»;
+    }
+
+    «k:return»;
+}
+
+«k:sub» «f:inspect» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «k:return» ref($«v:self») . «s:" - $self"»;
+}
+
+«k:sub» «f:to_string» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «t:my» $«v:ungrouped» = $«v:self»->{«s:'ungrouped'»};
+
+    «k:return» join(«s:', '», map { «s:"($_)"» } @{$«v:ungrouped»});
+}
+
+1;
+«k:package» «f:App»::Ack::Filter::IsGroup;
+
+«k:use» «c:strict»;
+«k:use» «c:warnings»;
+«k:BEGIN» {
+    our @«U:«v:ISA»» = «s:'App::Ack::Filter'»;
+}
+
+«k:use» «c:File»::Spec 3.00 ();
+
+«k:sub» «f:new» {
+    «t:my» ( $«v:class» ) = @«U:«v:_»»;
+
+    «k:return» bless {
+        data => {},
+    }, $«v:class»;
+}
+
+«k:sub» «f:add» {
+    «t:my» ( $«v:self», $«v:filter» ) = @«U:«v:_»»;
+
+    $«v:self»->{data}->{ $«v:filter»->{filename} } = 1;
+
+    «k:return»;
+}
+
+«k:sub» «f:filter» {
+    «t:my» ( $«v:self», $«v:resource» ) = @«U:«v:_»»;
+
+    «t:my» $«v:data» = $«v:self»->{«s:'data'»};
+    «t:my» $«v:base» = (File::Spec->splitpath($«v:resource»->name))[2];
+
+    «k:return» exists $«v:data»->{$«v:base»};
+}
+
+«k:sub» «f:inspect» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «k:return» ref($«v:self») . «s:" - $self"»;
+}
+
+«k:sub» «f:to_string» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «k:return» join(«s:' '», keys %{$«v:self»->{data}});
+}
+
+1;
+«k:package» «f:App»::Ack::Filter::ExtensionGroup;
+
+«k:use» «c:strict»;
+«k:use» «c:warnings»;
+«k:BEGIN» {
+    our @«U:«v:ISA»» = «s:'App::Ack::Filter'»;
+}
+
+«k:sub» «f:new» {
+    «t:my» ( $«v:class» ) = @«U:«v:_»»;
+
+    «k:return» bless {
+        data => {},
+    }, $«v:class»;
+}
+
+«k:sub» «f:add» {
+    «t:my» ( $«v:self», $«v:filter» ) = @«U:«v:_»»;
+
+    «k:foreach» «t:my» $«v:ext» (@{$«v:filter»->{extensions}}) {
+        $«v:self»->{data}->{lc $«v:ext»} = 1;
+    }
+
+    «k:return»;
+}
+
+«k:sub» «f:filter» {
+    «t:my» ( $«v:self», $«v:resource» ) = @«U:«v:_»»;
+
+    «k:if» ($«v:resource»->name =~ «s:/[.]([^.]*)$/») {
+        «k:return» exists $«v:self»->{«s:'data'»}->{lc $«v:1»};
+    }
+
+    «k:return» 0;
+}
+
+«k:sub» «f:inspect» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «k:return» ref($«v:self») . «s:" - $self"»;
+}
+
+«k:sub» «f:to_string» {
+    «t:my» ( $«v:self» ) = @«U:«v:_»»;
+
+    «k:return» join(«s:' '», map { «s:".$_"» } sort keys %{$«v:self»->{data}});
+}
+
+1;
+«k:package» «f:File»::Next;
+
+«k:use» «c:strict»;
+«k:use» «c:warnings»;
+
+
+our $«v:VERSION» = «s:'1.12'»;
+
+
+
+«k:use» «c:File»::Spec ();
+
+our $«v:name»; «x:# name of the current file
+»our $«v:dir»;  «x:# dir of the current file
+»
+our %«U:«v:files_defaults»»;
+our %«U:«v:skip_dirs»»;
+
+«k:BEGIN» {
+    %«U:«v:files_defaults»» = (
+        file_filter     => undef,
+        descend_filter  => undef,
+        error_handler   => «k:sub» { CORE::«k:die» @«U:«v:_»» },
+        warning_handler => «k:sub» { CORE::warn @«U:«v:_»» },
+        sort_files      => undef,
+        follow_symlinks => 1,
+        nul_separated   => 0,
+    );
+    %«U:«v:skip_dirs»» = map {($«v:_»,1)} (File::Spec->curdir, File::Spec->updir);
+}
+
+
+«k:sub» «f:files» {
+    «k:die» _bad_invocation() «k:if» @«U:«v:_»» && defined($«v:_»[0]) && ($«v:_»[0] eq __PACKAGE__);
+
+    «t:my» ($«v:parms»,@«U:«v:queue»») = _setup( \%«U:«v:files_defaults»», @«U:«v:_»» );
+    «t:my» $«v:filter» = $«v:parms»->{file_filter};
+
+    «k:return» «k:sub» {
+        «k:while» (@«U:«v:queue»») {
+            «t:my» ($«v:dirname»,$«v:file»,$«v:fullpath») = splice( @«U:«v:queue»», 0, 3 );
+            «k:if» ( -f $«v:fullpath» || -p $«v:fullpath» || $«v:fullpath» =~ m«s:{^/dev/fd}» ) {
+                «k:if» ( $«v:filter» ) {
+                    «t:local» $«v:_» = $«v:file»;
+                    «t:local» $«v:File::Next::dir» = $«v:dirname»;
+                    «t:local» $«v:File::Next::name» = $«v:fullpath»;
+                    «k:next» «k:if» not $«v:filter»->();
+                }
+                «k:return» wantarray ? ($«v:dirname»,$«v:file»,$«v:fullpath») : $«v:fullpath»;
+            }
+            «k:elsif» ( -d _ ) {
+                unshift( @«U:«v:queue»», _candidate_files( $«v:parms», $«v:fullpath» ) );
+            }
+        } «x:# while
+»
+        «k:return»;
+    }; «x:# iterator
+»}
+
+
+
+
+
+
+«k:sub» «f:from_file» {
+    «k:die» _bad_invocation() «k:if» @«U:«v:_»» && defined($«v:_»[0]) && ($«v:_»[0] eq __PACKAGE__);
+
+    «t:my» ($«v:parms»,@«U:«v:queue»») = _setup( \%«U:«v:files_defaults»», @«U:«v:_»» );
+    «t:my» $«v:err»  = $«v:parms»->{error_handler};
+    «t:my» $«v:warn» = $«v:parms»->{error_handler};
+
+    «t:my» $«v:filename» = $«v:queue»[1];
+
+    «k:if» ( !defined($«v:filename») ) {
+        $«v:err»->( «s:'Must pass a filename to from_file()'» );
+        «k:return» undef;
+    }
+
+    «t:my» $«v:fh»;
+    «k:if» ( $«v:filename» eq «s:'-'» ) {
+        $«v:fh» = \*«v:STDIN»;
+    }
+    «k:else» {
+        «k:if» ( !open( $«v:fh», «s:'<'», $«v:filename» ) ) {
+            $«v:err»->( «s:"Unable to open $filename: $!"» );
+            «k:return» undef;
+        }
+    }
+    «t:my» $«v:filter» = $«v:parms»->{file_filter};
+
+    «k:return» «k:sub» {
+        «t:local» $/ = $«v:parms»->{nul_separated} ? «s:"\x00"» : $/;
+        «k:while» ( «t:my» $«v:fullpath» = <$«v:fh»> ) {
+            chomp $«v:fullpath»;
+            «k:next» «k:unless» $«v:fullpath» =~ «s:/./»;
+            «k:if» ( not ( -f $«v:fullpath» || -p _ ) ) {
+                $«v:warn»->( «s:"$fullpath: No such file"» );
+                «k:next»;
+            }
+
+            «t:my» ($«v:volume»,$«v:dirname»,$«v:file») = File::Spec->splitpath( $«v:fullpath» );
+            «k:if» ( $«v:filter» ) {
+                «t:local» $«v:_» = $«v:file»;
+                «t:local» $«v:File::Next::dir»  = $«v:dirname»;
+                «t:local» $«v:File::Next::name» = $«v:fullpath»;
+                «k:next» «k:if» not $«v:filter»->();
+            }
+            «k:return» wantarray ? ($«v:dirname»,$«v:file»,$«v:fullpath») : $«v:fullpath»;
+        } «x:# while
+»        close $«v:fh»;
+
+        «k:return»;
+    }; «x:# iterator
+»}
+
+«k:sub» «f:_bad_invocation» {
+    «t:my» $«v:good» = (caller(1))[3];
+    «t:my» $«v:bad»  = $«v:good»;
+    $«v:bad» =~ s«s:/(.+)::/$1->/»;
+    «k:return» «s:"$good must not be invoked as $bad"»;
+}
+
+«k:sub» «f:sort_standard»($$)   { «k:return» $«v:_»[0]->[1] cmp $«v:_»[1]->[1] }
+«k:sub» «f:sort_reverse»($$)    { «k:return» $«v:_»[1]->[1] cmp $«v:_»[0]->[1] }
+
+«k:sub» «f:reslash» {
+    «t:my» $«v:path» = shift;
+
+    «t:my» @«U:«v:parts»» = split( «s:/\//», $«v:path» );
+
+    «k:return» $«v:path» «k:if» @«U:«v:parts»» < 2;
+
+    «k:return» File::Spec->catfile( @«U:«v:parts»» );
+}
+
+
+
+«k:sub» «f:_setup» {
+    «t:my» $«v:defaults» = shift;
+    «t:my» $«v:passed_parms» = ref $«v:_»[0] eq «s:'HASH'» ? {%{+shift}} : {}; «x:# copy parm hash
+»
+    «t:my» %«U:«v:passed_parms»» = %{$«v:passed_parms»};
+
+    «t:my» $«v:parms» = {};
+    «k:for» «t:my» $«v:key» ( keys %{$«v:defaults»} ) {
+        $«v:parms»->{$«v:key»} =
+            exists $«v:passed_parms»{$«v:key»}
+                ? delete $«v:passed_parms»{$«v:key»}
+                : $«v:defaults»->{$«v:key»};
+    }
+
+    «x:# Any leftover keys are bogus
+»    «k:for» «t:my» $«v:badkey» ( keys %«U:«v:passed_parms»» ) {
+        «t:my» $«k:sub» = (caller(1))[3];
+        $«v:parms»->{error_handler}->( «s:"Invalid option passed to $sub(): $badkey"» );
+    }
+
+    «x:# If it's not a code ref, assume standard sort
+»    «k:if» ( $«v:parms»->{sort_files} && ( ref($«v:parms»->{sort_files}) ne «s:'CODE'» ) ) {
+        $«v:parms»->{sort_files} = \&«f:sort_standard»;
+    }
+    «t:my» @«U:«v:queue»»;
+
+    «k:for» ( @«U:«v:_»» ) {
+        «t:my» $«v:start» = reslash( $«v:_» );
+        «k:if» (-d $«v:start») {
+            push @«U:«v:queue»», ($«v:start»,undef,$«v:start»);
+        }
+        «k:else» {
+            push @«U:«v:queue»», (undef,$«v:start»,$«v:start»);
+        }
+    }
+
+    «k:return» ($«v:parms»,@«U:«v:queue»»);
+}
+
+
+«k:sub» «f:_candidate_files» {
+    «t:my» $«v:parms»   = shift;
+    «t:my» $«v:dirname» = shift;
+
+    «t:my» $«v:dh»;
+    «k:if» ( !opendir $«v:dh», $«v:dirname» ) {
+        $«v:parms»->{error_handler}->( «s:"$dirname: $!"» );
+        «k:return»;
+    }
+
+    «t:my» @«U:«v:newfiles»»;
+    «t:my» $«v:descend_filter» = $«v:parms»->{descend_filter};
+    «t:my» $«v:follow_symlinks» = $«v:parms»->{follow_symlinks};
+    «t:my» $«v:sort_sub» = $«v:parms»->{sort_files};
+
+    «k:for» «t:my» $«v:file» ( grep { !exists $«v:skip_dirs»{$«v:_»} } readdir $«v:dh» ) {
+        «t:my» $«v:has_stat»;
+
+        «x:# Only do directory checking if we have a descend_filter
+»        «t:my» $«v:fullpath» = File::Spec->catdir( $«v:dirname», $«v:file» );
+        «k:if» ( !$«v:follow_symlinks» ) {
+            «k:next» «k:if» -l $«v:fullpath»;
+            $«v:has_stat» = 1;
+        }
+
+        «k:if» ( $«v:descend_filter» ) {
+            «k:if» ( $«v:has_stat» ? (-d _) : (-d $«v:fullpath») ) {
+                «t:local» $«v:File::Next::dir» = $«v:fullpath»;
+                «t:local» $«v:_» = $«v:file»;
+                «k:next» «k:if» not $«v:descend_filter»->();
+            }
+        }
+        «k:if» ( $«v:sort_sub» ) {
+            push( @«U:«v:newfiles»», [ $«v:dirname», $«v:file», $«v:fullpath» ] );
+        }
+        «k:else» {
+            push( @«U:«v:newfiles»», $«v:dirname», $«v:file», $«v:fullpath» );
+        }
+    }
+    closedir $«v:dh»;
+
+    «k:if» ( $«v:sort_sub» ) {
+        «k:return» map { @{$«v:_»} } sort $«v:sort_sub» @«U:«v:newfiles»»;
+    }
+
+    «k:return» @«U:«v:newfiles»»;
+}
+
+
+1; «x:# End of File::Next
+»

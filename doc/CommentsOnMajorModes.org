@@ -1,0 +1,234 @@
+Comments on Syntax Highlighting of major modes
+
+By Anders Lindgren
+
+    ABSTRACT
+
+This file contains personal comments on syntax highlighting provided of the
+major modes of tested the font-lock regression suite. The comment should be
+taken with a grain of salt, as the author does not have deep knowledge of all
+major modes this survey covers. Unlike
+
+* Major modes:
+
+** Part of the Emacs standard distribution
+
+The following table list the major modes of the Emacs distribution this package
+provides tests for.
+
+- [X] Ada
+- [ ] antlr
+- [ ] asm
+- [X] autoconf
+- [X] bat
+- [X] C
+- [ ] C++
+- [ ] cfengine
+- [ ] dcl
+- [X] ELisp
+- [X] f90
+- [ ] fortran
+- [ ] icon
+- [ ] idlwave
+- [X] JavaScript (js)
+- [X] JavaScript (js2)
+- [ ] ld
+- [ ] script
+- [ ] Lisp
+- [X] m4
+- [X] Make
+- [ ] MetaFont / MetaPost
+- [ ] mixasm
+- [ ] Modula2
+- [ ] Object Pascal
+- [X] Objective-C
+- [ ] Octave
+- [ ] Pascal
+- [X] Perl
+- [X] CPerl
+- [X] Prolog
+- [X] PostScript
+- [X] Python
+- [X] Ruby
+- [ ] Scheme
+- [ ] Shell script
+- [ ] Simula
+- [ ] SQL (under ComInt)
+- [ ] tcl
+- [ ] Vera
+- [ ] Verilog
+- [ ] VHDL
+
+** Non-standard modes
+
+The ambition of this regression suite is to cover a handful of popular
+packages, not part of the standard Emacs distribution, that do not provide
+font-lock regression tests by themselves. The following list contains major
+modes likely to be added. (A complete list of every major mode written for
+Emacs would be to voluminous.)
+
+- [ ] Erlang
+- [ ] Haskell
+
+* Supported minor modes:
+
+** Part of the Emacs standard distribution
+
+- [X] CWarn
+- [ ] Prettify symbol
+
+** Non-standard modes
+
+* Personal comments on syntax highlighting in various modes
+
+** Ada
+
+Overall, highlighting looks OK.
+
+- Unlike other modes, numbers are highlighted. Personally, I would
+  like to see this as a mode-independent option, not something
+  implemented in a single mode like Ada.
+
+- It fails to highlight numbers like "2.9979E18".
+
+- It doesn't highlight variable definitions, like "cLight" in
+  "cLight : CONSTANT Real := 2.9979E18;".
+
+- A lot of types are not highlighted, like String and user-defined
+  types.
+
+** Autoconf
+
+Extremely sparse highlighting. Looks like it only highlights a few
+constructs, but leaves underlying shell code unhighlighted.
+
+One, alternative, approach would be to make this a minor mode that
+could add it's rules to, say, bash mode. (Or does this feature already
+exist?)
+
+** Bat
+
+Ok, where do we start. This is really, really bad. There is a lot of
+highlighting but it shows up in the wrong places all of the time.
+
+- The argument to "echo" should be highlighted as a string.
+
+- Variables can't have "_" in them.
+
+- Variables are not highlighted in strings.
+
+- Make sure "SET foo=bar" and "SET foo_2=bar" work.
+
+- "in" should not be highlighted as a keyword when in a file name like
+  "foo.in"
+
+** ELisp
+
+Seriously? Emacs is the king of text editors and elisp is its language, and
+this is the best syntax highlighting we could come up with?
+
+Only a handful of construct are highlighted, like keywords, variable and
+function names etc.
+
+OK, I might be a bit biased, I've written a package that highlights a lot more
+in lisp packages: variables bound in parameter lists and let
+expressions. Quoted and backquoted expressions. etc. See
+https://github.com/Lindydancer/lisp-extra-font-lock for more information.
+
+** F90
+
+Overall OK.
+
+- Complex variable definitions highlight too much. For example, in
+  "real :: a(10), b(5, 5), c(13,15,17), conv1(3,3), conv2(3,3)"
+  everything after the "::" is in font-lock-variable-name-face,
+  including the commas and parentheses.
+
+** JavaScript
+
+*** Standard js-mode
+
+- It doesn't highlight doxygen-style comment.
+
+** M4
+
+Very simple major mode.
+
+In "aclocal.m4" m4-mode fails to highlight some comments. Neither
+m4-mode nor autoconf mode highlights the shell script parts of the
+file.
+
+*** Suggestion
+
+As M4 is a generic preprocessor, an alternative would be to implement
+this as a minor mode and use it in addition to the major mode that
+corresponds to the file being handled.
+
+** Make
+
+Emacs does a pretty decent job. It would be nice if shell script code in rules
+would be highlighted. It's doable, but hard work.
+
+** Objective-C
+
+- Doesn't highlight Objective-C method calls (Here comes
+  https://github.com/Lindydancer/objc-font-lock to the rescue.)
+
+- Mistakes a leading "+" and "-" for a method declaration/definition,
+  even when occurring in the middle of code section.
+
+** Perl
+
+*** Perl mode
+
+- It seems to explicitly set specific faces like "underline" on some cases. I'm
+  not sure if it's configurable, but it undermines the idea of themes.
+
+*** CPerl mode
+
+- Provides home-brewed system for highlighting end-of-line spaces. It should
+  use show-trailing-whitespace instead.
+
+- Defines a number of mode-specific faces, which makes life difficult for theme
+  providers.
+
+- Several rules use "t" as OVERRIDE flag to add additional highlight. This has
+  two problems:
+
+  1) It overwrites things in all contexts, including comments. (Can be fixed by
+     checking =syntax-ppss=.)
+
+  2) It overwrites all attributes (e.g. foreground and background) even if the
+     overwriting face only contains some attributes. (Can be fixed by using
+     =prepend=.)
+
+** PostScript
+
+Unreadable language, but with better highlighting support life could
+be a bit better. Example shows line upon line of the following:
+
+    932 1156 ln st np 932 1156 mv 975 1156 ln st np 975 1156 mv 1018
+    1156 ln st np 1018 1156 mv 1056 1156 ln st np 1056 1156 mv 1086
+    1156 ln st np 1086 1156 mv 1110 1156 ln st np 1110 1156 mv 1131
+
+Maybe highlighting could be used to group things together, visually?
+
+- Data to the "colorimage" is subject to highlighting, which it
+  shouldn't. (Maybe highlight is as a string?) See the bell_206.ps
+  example from "fsu".
+
+** Prolog
+
+- Overwrites comments with things like "foo/4".
+
+- Don't highlight the "is" keyword. (Is "is" a keyword?)
+
+- Doesn't seem to be aware of the "foo:bar" syntax. (Is it standard?)
+
+** sh TODO
+
+The variables substitution construct $(VAR) is highlighted in comments.
+
+** Shell script mode
+
+Strings containing "<<" are treated as heredoc comments.

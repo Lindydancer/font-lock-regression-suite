@@ -1,0 +1,241 @@
+@«b:echo» off
+«x:rem   ----------------------------------------------------------------------
+rem   Configuration script for MSDOS
+rem   Copyright (C) 1994 Free Software Foundation, Inc.
+»
+«x:rem   This file is part of GNU Emacs.
+»
+«x:rem   GNU Emacs is free software; you can redistribute it and/or modify
+rem   it under the terms of the GNU General Public License as published by
+rem   the Free Software Foundation; either version 2, or (at your option)
+rem   any later version.
+»
+«x:rem   GNU Emacs is distributed in the hope that it will be useful,
+rem   but WITHOUT ANY WARRANTY; without even the implied warranty of
+rem   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+rem   GNU General Public License for more details.
+»
+«x:rem   You should have received a copy of the GNU General Public License
+rem   along with GNU Emacs; see the file COPYING.  If not, write to the
+rem   Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+rem   Boston, MA 02111-1307, USA.
+rem   ----------------------------------------------------------------------
+rem   YOU'LL NEED THE FOLLOWING UTILITIES TO MAKE EMACS:
+rem
+rem   + msdos version 3 or better.
+rem   + djgpp version 1.12maint1 or later (version 2.0 or later recommended).
+rem   + make utility that allows breaking of the 128 chars limit on
+rem     command lines.  ndmake (as of version 4.5) won't work due to a
+rem     line length limit.  The make that comes with djgpp does work.
+rem   + rm and mv (from GNU file utilities).
+rem   + sed (you can use the port that comes with DJGPP).
+rem
+rem   You should be able to get all the above utilities from any SimTel
+rem   repository, e.g. ftp.simtel.net, in the directory
+rem   "pub/simtelnet/gnu/djgpp/v2gnu".  As usual, please use your local
+rem   mirroring site to reduce trans-Atlantic traffic.
+rem   ----------------------------------------------------------------------
+»«b:set» «v:X11»=
+«b:set» «v:nodebug»=
+«b:set» «v:djgpp»_ver=
+«k:if» «s:"%1"» == «s:""» «k:goto» «c:usage»
+«x:rem   ----------------------------------------------------------------------
+rem   See if their environment is large enough.  We need 28 bytes.
+»«b:set» «v:$foo$»=789012345678901234567
+«k:if» «k:not» «s:"%$foo$%"» == «s:"789012345678901234567"» «k:goto» «c:SmallEnv»
+«b:set» «v:$foo$»=
+«:bat-label-face::again»
+«k:if» «s:"%1"» == «s:""» «k:goto» «c:usage»
+«k:if» «s:"%1"» == «s:"--with-x"» «k:goto» «c:withx»
+«k:if» «s:"%1"» == «s:"--no-debug"» «k:goto» «c:nodebug»
+«k:if» «s:"%1"» == «s:"msdos"» «k:goto» «c:msdos»
+«:bat-label-face::usage»
+«b:echo» Usage: config [--with-x] [--no-debug] msdos
+«b:echo» [Read the script before you run it.]
+«k:goto» «c:end»
+«x:rem   ----------------------------------------------------------------------
+»«:bat-label-face::withx»
+«b:set» «v:X11»=Y
+«b:shift»
+«k:goto» «c:again»
+«x:rem   ----------------------------------------------------------------------
+»«:bat-label-face::nodebug»
+«b:set» «v:nodebug»=Y
+«b:shift»
+«k:goto» «c:again»
+«x:rem   ----------------------------------------------------------------------
+»«:bat-label-face::msdos»
+«b:Echo» Checking whether '«w:sed»' is available...
+«w:sed» -«t:e» «s:"w junk.$$$"» <Nul
+«k:If» «k:Exist» junk.$$$ «k:Goto» «c:sedOk»
+«b:Echo» To configure 'Emacs' you need to have '«w:sed»'!
+«k:Goto» «c:End»
+«:bat-label-face::sedOk»
+«b:Echo» Checking whether '«w:rm»' is available...
+«w:rm» -«t:f» junk.$$$
+«k:If» «k:Not» «k:Exist» junk.$$$ «k:Goto» «c:rmOk»
+«b:Echo» To configure 'Emacs' you need to have '«w:rm»'!
+«k:Goto» «c:End»
+«:bat-label-face::rmOk»
+«b:Echo» Checking whether '«w:mv»' is available...
+«w:rm» -«t:f» junk.1 junk.2
+«b:echo» foo >junk.1
+«w:mv» junk.1 ./junk.2
+«k:If» «k:Exist» junk.2 «k:Goto» «c:mvOk»
+«b:Echo» To configure 'Emacs' you need to have '«w:mv»'!
+«w:rm» -«t:f» junk.1
+«k:Goto» «c:End»
+«:bat-label-face::mvOk»
+«w:rm» -«t:f» junk.2
+«b:Echo» Checking whether 'gcc' is available...
+«b:echo» main(){} >junk.c
+gcc -«t:c» junk.c
+«k:if» «k:exist» junk.o «k:goto» «c:gccOk»
+«b:Echo» To configure 'Emacs' you need to have 'gcc'!
+«w:rm» -«t:f» junk.c
+«k:Goto» «c:End»
+«:bat-label-face::gccOk»
+«w:rm» -«t:f» junk.c junk.o junk junk.exe
+«b:Echo» Checking what version of DJGPP is installed...
+«k:If» «k:Not» «s:"%DJGPP%"» == «s:""» «k:goto» «c:djgppOk»
+«b:Echo» To compile 'Emacs' under MS-DOS you MUST have DJGPP installed!
+«k:Goto» «c:End»
+«:bat-label-face::djgppOk»
+«b:echo» int main()           >junk.c
+«b:echo» #ifdef __DJGPP__    >>junk.c
+«b:echo» {return (__DJGPP__)*10;} >>junk.c
+«b:echo» #«k:else»               >>junk.c
+«b:echo» #ifdef __GO32__     >>junk.c
+«b:echo» {return 10;}         >>junk.c
+«b:echo» #«k:else»               >>junk.c
+«b:echo» {return 0;}         >>junk.c
+«b:echo» #endif              >>junk.c
+«b:echo» #endif              >>junk.c
+gcc -«t:o» junk junk.c
+«k:if» «k:not» «k:exist» junk.exe coff2exe junk
+junk
+«k:If» ErrorLevel 10 «k:Goto» «c:go32Ok»
+«w:rm» -«t:f» junk.c junk junk.exe
+«b:Echo» To compile 'Emacs' under MS-DOS you MUST have DJGPP installed!
+«k:Goto» «c:End»
+«:bat-label-face::go32Ok»
+«b:set» «v:djgpp»_ver=1
+«k:If» ErrorLevel 20 «b:set» «v:djgpp»_ver=2
+«w:rm» -«t:f» junk.c junk junk.exe
+«b:Echo» Configuring «k:for» DJGPP Version %«v:DJGPP»_VER% ...
+«x:Rem   ----------------------------------------------------------------------
+»«b:Echo» Configuring the source directory...
+«b:cd» src
+
+«x:rem   Create "epaths.h"
+»«w:sed» -«t:f» ../msdos/sed4.inp <epaths.«k:in» >epaths.tmp
+update epaths.tmp epaths.h >nul
+«w:rm» -«t:f» epaths.tmp
+
+«x:rem   Create "config.h"
+»«w:rm» -«t:f» config.h2 config.tmp
+«w:sed» -«t:e» '' config.«k:in» > config.tmp
+«k:if» «s:"%X11%"» == «s:""» «k:goto» «c:src4»
+«w:sed» -«t:f» ../msdos/sed2x.inp <config.«k:in» >config.tmp
+«:bat-label-face::src4»
+«w:sed» -«t:f» ../msdos/sed2.inp <config.tmp >config.h2
+update config.h2 config.h >nul
+«w:rm» -«t:f» config.tmp config.h2
+
+«x:rem   On my system dir.h gets in the way.  It's a VMS file so who cares.
+»«k:if» «k:exist» «b:dir».h «b:ren» «b:dir».h vmsdir.h
+
+«x:rem   Create "makefile" from "makefile.in".
+»«w:rm» -«t:f» Makefile junk.c
+«w:sed» -«t:e» «s:"1,/cpp stuff/s@^# .*$@@"» <Makefile.«k:in» >junk.c
+«k:If» «s:"%DJGPP_VER%"» == «s:"1"» «k:Goto» «c:mfV1»
+gcc -«t:E» junk.c | «w:sed» -«t:f» ../msdos/sed1v2.inp >Makefile
+«k:goto» «c:mfDone»
+«:bat-label-face::mfV1»
+gcc -«t:E» junk.c | «w:sed» -«t:f» ../msdos/sed1.inp >Makefile
+«:bat-label-face::mfDone»
+«w:rm» -«t:f» junk.c
+
+«k:if» «s:"%X11%"» == «s:""» «k:goto» «c:src5»
+«w:mv» Makefile makefile.tmp
+«w:sed» -«t:f» ../msdos/sed1x.inp <makefile.tmp >Makefile
+«w:rm» -«t:f» makefile.tmp
+«:bat-label-face::src5»
+
+«k:if» «s:"%nodebug%"» == «s:""» «k:goto» «c:src6»
+«w:sed» -«t:e» «s:"/^CFLAGS *=/»«t:«s:s»»«s:/ *-g//"» <Makefile >makefile.tmp
+«w:sed» -«t:e» «s:"/^LDFLAGS *=/»«t:«s:s»»«s:/=/=-»«t:«s:s»»«s:/"» <makefile.tmp >Makefile
+«w:rm» -«t:f» makefile.tmp
+«:bat-label-face::src6»
+«b:cd» ..
+«x:rem   ----------------------------------------------------------------------
+»«b:Echo» Configuring the library source directory...
+«b:cd» lib-src
+«x:rem   Create "makefile" from "makefile.in".
+»«w:sed» -«t:e» «s:"1,/cpp stuff/s@^# .*$@@"» <Makefile.«k:in» >junk.c
+gcc -«t:E» -«t:I». -«t:I»../src junk.c | «w:sed» -«t:e» «s:"s/^ /	/"» -«t:e» «s:"/^#/d"» -«t:e» «s:"/^[ 	]*$/d"» >makefile.new
+«k:If» «s:"%DJGPP_VER%"» == «s:"2"» «k:goto» «c:libsrc-v2»
+«w:sed» -«t:f» ../msdos/sed3.inp <makefile.new >Makefile
+«k:Goto» «c:libsrc2»
+«:bat-label-face::libsrc-v2»
+«w:sed» -«t:f» ../msdos/sed3v2.inp <makefile.new >Makefile
+«:bat-label-face::libsrc2»
+«w:rm» -«t:f» makefile.new junk.c
+«k:if» «s:"%nodebug%"» == «s:""» «k:goto» «c:libsrc3»
+«w:sed» -«t:e» «s:"/^CFLAGS *=/»«t:«s:s»»«s:/ *-g//"» <Makefile >makefile.tmp
+«w:sed» -«t:e» «s:"/^ALL_CFLAGS *=/»«t:«s:s»»«s:/=/= -»«t:«s:s»»«s:/"» <makefile.tmp >Makefile
+«w:rm» -«t:f» makefile.tmp
+«:bat-label-face::libsrc3»
+«b:cd» ..
+«x:rem   ----------------------------------------------------------------------
+»«k:if» «s:"%X11%"» == «s:""» «k:goto» «c:oldx1»
+«b:Echo» Configuring the oldxmenu directory...
+«b:cd» oldxmenu
+«w:sed» -«t:f» ../msdos/sed5x.inp <Makefile.«k:in» >Makefile
+«k:if» «s:"%nodebug%"» == «s:""» «k:goto» «c:oldx2»
+«w:sed» -«t:e» «s:"/^CFLAGS *=/»«t:«s:s»»«s:/ *-g//"» <Makefile >makefile.tmp
+«w:mv» -«t:f» makefile.tmp Makefile
+«:bat-label-face::oldx2»
+«b:cd» ..
+«:bat-label-face::oldx1»
+«x:rem   ----------------------------------------------------------------------
+»«b:Echo» Configuring the manual directory...
+«b:cd» man
+«w:sed» -«t:f» ../msdos/sed6.inp < Makefile.«k:in» > Makefile
+«b:cd» ..
+«x:rem   ----------------------------------------------------------------------
+»«k:If» «k:not» «k:Exist» leim\quail\latin-pre.el «k:goto» «c:maindir»
+«b:Echo» Configuring the leim directory...
+«b:cd» leim
+«w:sed» -«t:f» ../msdos/sedleim.inp < Makefile.«k:in» > Makefile
+«b:cd» ..
+«x:rem   ----------------------------------------------------------------------
+»«:bat-label-face::maindir»
+«b:Echo» Configuring the main directory...
+«k:If» «s:"%DJGPP_VER%"» == «s:"1"» «k:goto» «c:mainv1»
+«b:Echo» Looking «k:for» the GDB init file...
+«k:If» «k:not» «k:Exist» src\_gdbinit «k:If» «k:Exist» src\.gdbinit update src/.gdbinit src/_gdbinit
+«k:If» «k:Exist» src\_gdbinit «k:goto» «c:gdbinitOk»
+«b:Echo» ERROR:
+«b:Echo» I cannot «b:find» the GDB init file.  It was called «s:".gdbinit"» «k:in»
+«b:Echo» the Emacs distribution, but was probably renamed to some other
+«b:Echo» name without the leading dot when you untarred the archive.
+«b:Echo» It should be «k:in» the «s:"src/"» subdirectory.  Please make sure this
+«b:Echo» file exists and is called «s:"_gdbinit"» with a leading underscore.
+«b:Echo» Then run CONFIG.BAT again with the same arguments you did now.
+«k:goto» «c:End»
+«:bat-label-face::gdbinitOk»
+«b:Echo» Looking «k:for» the GDB init file...found
+«b:copy» msdos\mainmake.v2 Makefile >nul
+«:bat-label-face::mainv1»
+«k:If» «s:"%DJGPP_VER%"» == «s:"1"» «b:copy» msdos\mainmake Makefile >nul
+«x:rem   ----------------------------------------------------------------------
+»«k:goto» «c:End»
+«:bat-label-face::SmallEnv»
+«b:echo» Your environment size is too small.  Please enlarge it and run me again.
+«b:echo» «k:For» example, «b:type» «s:"command.com /»«t:«s:e»»«s::2048"» to have 2048 bytes available.
+«b:set» «v:$foo$»=
+«:bat-label-face::end»
+«b:set» «v:X11»=
+«b:set» «v:nodebug»=
+«b:set» «v:djgpp»_ver=

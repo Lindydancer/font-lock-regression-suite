@@ -1,0 +1,1093 @@
+«x:# Pretty-printers for libstc++.
+»
+«x:# Copyright (C) 2008-2014 Free Software Foundation, Inc.
+»
+«x:# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+»
+«k:import» gdb
+«k:import» itertools
+«k:import» re
+
+«x:# Try to use the new-style pretty-printing if available.
+»«v:_use_gdb_pp» = «k:True»
+«k:try»:
+    «k:import» gdb.printing
+«k:except» «t:ImportError»:
+    _use_gdb_pp = «k:False»
+
+«x:# Try to install type-printers.
+»«v:_use_type_printing» = «k:False»
+«k:try»:
+    «k:import» gdb.types
+    «k:if» «b:hasattr»(gdb.types, «s:'TypePrinter'»):
+        _use_type_printing = «k:True»
+«k:except» «t:ImportError»:
+    «k:pass»
+
+«x:# Starting with the type ORIG, search for the member type NAME.  This
+# handles searching upward through superclasses.  This is needed to
+# work around http://sourceware.org/bugzilla/show_bug.cgi?id=13615.
+»«k:def» «f:find_type»(orig, name):
+    typ = orig.strip_typedefs()
+    «k:while» «k:True»:
+        search = «b:str»(typ) + «s:'::'» + name
+        «k:try»:
+            «k:return» gdb.lookup_type(search)
+        «k:except» «t:RuntimeError»:
+            «k:pass»
+        «x:# The type was not found, so try the superclass.  We only need
+»        «x:# to check the first superclass, so we don't bother with
+»        «x:# anything fancier here.
+»        field = typ.fields()[0]
+        «k:if» «k:not» field.is_base_class:
+            «k:raise» «t:ValueError», «s:"Cannot find type %s::%s"» % («b:str»(orig), name)
+        typ = field.type
+
+«k:class» «t:SharedPointerPrinter»:
+    «s:"Print a shared_ptr or weak_ptr"»
+
+    «k:def» «f:__init__» («k:self», typename, val):
+        «k:self».typename = typename
+        «k:self».val = val
+
+    «k:def» «f:to_string» («k:self»):
+        state = «s:'empty'»
+        refcounts = «k:self».val[«s:'_M_refcount'»][«s:'_M_pi'»]
+        «k:if» refcounts != 0:
+            usecount = refcounts[«s:'_M_use_count'»]
+            weakcount = refcounts[«s:'_M_weak_count'»]
+            «k:if» usecount == 0:
+                state = «s:'expired, weak %d'» % weakcount
+            «k:else»:
+                state = «s:'count %d, weak %d'» % (usecount, weakcount - 1)
+        «k:return» «s:'%s (%s) %s'» % («k:self».typename, state, «k:self».val[«s:'_M_ptr'»])
+
+«k:class» «t:UniquePointerPrinter»:
+    «s:"Print a unique_ptr"»
+
+    «k:def» «f:__init__» («k:self», typename, val):
+        «k:self».val = val
+
+    «k:def» «f:to_string» («k:self»):
+        v = «k:self».val[«s:'_M_t'»][«s:'_M_head_impl'»]
+        «k:return» («s:'std::unique_ptr<%s> containing %s'» % («b:str»(v.type.target()),
+                                                       «b:str»(v)))
+
+«k:class» «t:StdListPrinter»:
+    «s:"Print a std::list"»
+
+    «k:class» «t:_iterator»:
+        «k:def» «f:__init__»(«k:self», nodetype, head):
+            «k:self».nodetype = nodetype
+            «k:self».base = head[«s:'_M_next'»]
+            «k:self».head = head.address
+            «k:self».count = 0
+
+        «k:def» «f:__iter__»(«k:self»):
+            «k:return» «k:self»
+
+        «k:def» «f:next»(«k:self»):
+            «k:if» «k:self».base == «k:self».head:
+                «k:raise» «t:StopIteration»
+            elt = «k:self».base.cast(«k:self».nodetype).dereference()
+            «k:self».base = elt[«s:'_M_next'»]
+            count = «k:self».count
+            «k:self».count = «k:self».count + 1
+            «k:return» («s:'[%d]'» % count, elt[«s:'_M_data'»])
+
+    «k:def» «f:__init__»(«k:self», typename, val):
+        «k:self».typename = typename
+        «k:self».val = val
+
+    «k:def» «f:children»(«k:self»):
+        nodetype = find_type(«k:self».val.type, «s:'_Node'»)
+        nodetype = nodetype.strip_typedefs().pointer()
+        «k:return» «k:self»._iterator(nodetype, «k:self».val[«s:'_M_impl'»][«s:'_M_node'»])
+
+    «k:def» «f:to_string»(«k:self»):
+        «k:if» «k:self».val[«s:'_M_impl'»][«s:'_M_node'»].address == «k:self».val[«s:'_M_impl'»][«s:'_M_node'»][«s:'_M_next'»]:
+            «k:return» «s:'empty %s'» % («k:self».typename)
+        «k:return» «s:'%s'» % («k:self».typename)
+
+«k:class» «t:StdListIteratorPrinter»:
+    «s:"Print std::list::iterator"»
+
+    «k:def» «f:__init__»(«k:self», typename, val):
+        «k:self».val = val
+        «k:self».typename = typename
+
+    «k:def» «f:to_string»(«k:self»):
+        nodetype = find_type(«k:self».val.type, «s:'_Node'»)
+        nodetype = nodetype.strip_typedefs().pointer()
+        «k:return» «k:self».val[«s:'_M_node'»].cast(nodetype).dereference()[«s:'_M_data'»]
+
+«k:class» «t:StdSlistPrinter»:
+    «s:"Print a __gnu_cxx::slist"»
+
+    «k:class» «t:_iterator»:
+        «k:def» «f:__init__»(«k:self», nodetype, head):
+            «k:self».nodetype = nodetype
+            «k:self».base = head[«s:'_M_head'»][«s:'_M_next'»]
+            «k:self».count = 0
+
+        «k:def» «f:__iter__»(«k:self»):
+            «k:return» «k:self»
+
+        «k:def» «f:next»(«k:self»):
+            «k:if» «k:self».base == 0:
+                «k:raise» «t:StopIteration»
+            elt = «k:self».base.cast(«k:self».nodetype).dereference()
+            «k:self».base = elt[«s:'_M_next'»]
+            count = «k:self».count
+            «k:self».count = «k:self».count + 1
+            «k:return» («s:'[%d]'» % count, elt[«s:'_M_data'»])
+
+    «k:def» «f:__init__»(«k:self», typename, val):
+        «k:self».val = val
+
+    «k:def» «f:children»(«k:self»):
+        nodetype = find_type(«k:self».val.type, «s:'_Node'»)
+        nodetype = nodetype.strip_typedefs().pointer()
+        «k:return» «k:self»._iterator(nodetype, «k:self».val)
+
+    «k:def» «f:to_string»(«k:self»):
+        «k:if» «k:self».val[«s:'_M_head'»][«s:'_M_next'»] == 0:
+            «k:return» «s:'empty __gnu_cxx::slist'»
+        «k:return» «s:'__gnu_cxx::slist'»
+
+«k:class» «t:StdSlistIteratorPrinter»:
+    «s:"Print __gnu_cxx::slist::iterator"»
+
+    «k:def» «f:__init__»(«k:self», typename, val):
+        «k:self».val = val
+
+    «k:def» «f:to_string»(«k:self»):
+        nodetype = find_type(«k:self».val.type, «s:'_Node'»)
+        nodetype = nodetype.strip_typedefs().pointer()
+        «k:return» «k:self».val[«s:'_M_node'»].cast(nodetype).dereference()[«s:'_M_data'»]
+
+«k:class» «t:StdVectorPrinter»:
+    «s:"Print a std::vector"»
+
+    «k:class» «t:_iterator»:
+        «k:def» «f:__init__» («k:self», start, finish, bitvec):
+            «k:self».bitvec = bitvec
+            «k:if» bitvec:
+                «k:self».item   = start[«s:'_M_p'»]
+                «k:self».so     = start[«s:'_M_offset'»]
+                «k:self».finish = finish[«s:'_M_p'»]
+                «k:self».fo     = finish[«s:'_M_offset'»]
+                itype = «k:self».item.dereference().type
+                «k:self».isize = 8 * itype.sizeof
+            «k:else»:
+                «k:self».item = start
+                «k:self».finish = finish
+            «k:self».count = 0
+
+        «k:def» «f:__iter__»(«k:self»):
+            «k:return» «k:self»
+
+        «k:def» «f:next»(«k:self»):
+            count = «k:self».count
+            «k:self».count = «k:self».count + 1
+            «k:if» «k:self».bitvec:
+                «k:if» «k:self».item == «k:self».finish «k:and» «k:self».so >= «k:self».fo:
+                    «k:raise» «t:StopIteration»
+                elt = «k:self».item.dereference()
+                «k:if» elt & (1 << «k:self».so):
+                    obit = 1
+                «k:else»:
+                    obit = 0
+                «k:self».so = «k:self».so + 1
+                «k:if» «k:self».so >= «k:self».isize:
+                    «k:self».item = «k:self».item + 1
+                    «k:self».so = 0
+                «k:return» («s:'[%d]'» % count, obit)
+            «k:else»:
+                «k:if» «k:self».item == «k:self».finish:
+                    «k:raise» «t:StopIteration»
+                elt = «k:self».item.dereference()
+                «k:self».item = «k:self».item + 1
+                «k:return» («s:'[%d]'» % count, elt)
+
+    «k:def» «f:__init__»(«k:self», typename, val):
+        «k:self».typename = typename
+        «k:self».val = val
+        «k:self».is_bool = val.type.template_argument(0).code  == gdb.TYPE_CODE_BOOL
+
+    «k:def» «f:children»(«k:self»):
+        «k:return» «k:self»._iterator(«k:self».val[«s:'_M_impl'»][«s:'_M_start'»],
+                              «k:self».val[«s:'_M_impl'»][«s:'_M_finish'»],
+                              «k:self».is_bool)
+
+    «k:def» «f:to_string»(«k:self»):
+        start = «k:self».val[«s:'_M_impl'»][«s:'_M_start'»]
+        finish = «k:self».val[«s:'_M_impl'»][«s:'_M_finish'»]
+        end = «k:self».val[«s:'_M_impl'»][«s:'_M_end_of_storage'»]
+        «k:if» «k:self».is_bool:
+            start = «k:self».val[«s:'_M_impl'»][«s:'_M_start'»][«s:'_M_p'»]
+            so    = «k:self».val[«s:'_M_impl'»][«s:'_M_start'»][«s:'_M_offset'»]
+            finish = «k:self».val[«s:'_M_impl'»][«s:'_M_finish'»][«s:'_M_p'»]
+            fo     = «k:self».val[«s:'_M_impl'»][«s:'_M_finish'»][«s:'_M_offset'»]
+            itype = start.dereference().type
+            bl = 8 * itype.sizeof
+            length   = (bl - so) + bl * ((finish - start) - 1) + fo
+            capacity = bl * (end - start)
+            «k:return» («s:'%s<bool> of length %d, capacity %d'»
+                    % («k:self».typename, «b:int» (length), «b:int» (capacity)))
+        «k:else»:
+            «k:return» («s:'%s of length %d, capacity %d'»
+                    % («k:self».typename, «b:int» (finish - start), «b:int» (end - start)))
+
+    «k:def» «f:display_hint»(«k:self»):
+        «k:return» «s:'array'»
+
+«k:class» «t:StdVectorIteratorPrinter»:
+    «s:"Print std::vector::iterator"»
+
+    «k:def» «f:__init__»(«k:self», typename, val):
+        «k:self».val = val
+
+    «k:def» «f:to_string»(«k:self»):
+        «k:return» «k:self».val[«s:'_M_current'»].dereference()
+
+«k:class» «t:StdTuplePrinter»:
+    «s:"Print a std::tuple"»
+
+    «k:class» «t:_iterator»:
+        «k:def» «f:__init__» («k:self», head):
+            «k:self».head = head
+
+            «x:# Set the base class as the initial head of the
+»            «x:# tuple.
+»            nodes = «k:self».head.type.fields ()
+            «k:if» «b:len» (nodes) == 1:
+                «x:# Set the actual head to the first pair.
+»                «k:self».head  = «k:self».head.cast (nodes[0].type)
+            «k:elif» «b:len» (nodes) != 0:
+                «k:raise» «t:ValueError», «s:"Top of tuple tree does not consist of a single node."»
+            «k:self».count = 0
+
+        «k:def» «f:__iter__» («k:self»):
+            «k:return» «k:self»
+
+        «k:def» «f:next» («k:self»):
+            nodes = «k:self».head.type.fields ()
+            «x:# Check for further recursions in the inheritance tree.
+»            «k:if» «b:len» (nodes) == 0:
+                «k:raise» «t:StopIteration»
+            «x:# Check that this iteration has an expected structure.
+»            «k:if» «b:len» (nodes) != 2:
+                «k:raise» «t:ValueError», «s:"Cannot parse more than 2 nodes in a tuple tree."»
+
+            «x:# - Left node is the next recursion parent.
+»            «x:# - Right node is the actual class contained in the tuple.
+»
+            «x:# Process right node.
+»            impl = «k:self».head.cast (nodes[1].type)
+
+            «x:# Process left node and set it as head.
+»            «k:self».head  = «k:self».head.cast (nodes[0].type)
+            «k:self».count = «k:self».count + 1
+
+            «x:# Finally, check the implementation.  If it is
+»            «x:# wrapped in _M_head_impl return that, otherwise return
+»            «x:# the value "as is".
+»            fields = impl.type.fields ()
+            «k:if» «b:len» (fields) < 1 «k:or» fields[0].name != «s:"_M_head_impl"»:
+                «k:return» («s:'[%d]'» % «k:self».count, impl)
+            «k:else»:
+                «k:return» («s:'[%d]'» % «k:self».count, impl[«s:'_M_head_impl'»])
+
+    «k:def» «f:__init__» («k:self», typename, val):
+        «k:self».typename = typename
+        «k:self».val = val;
+
+    «k:def» «f:children» («k:self»):
+        «k:return» «k:self»._iterator («k:self».val)
+
+    «k:def» «f:to_string» («k:self»):
+        «k:if» «b:len» («k:self».val.type.fields ()) == 0:
+            «k:return» «s:'empty %s'» % («k:self».typename)
+        «k:return» «s:'%s containing'» % («k:self».typename)
+
+«k:class» «t:StdStackOrQueuePrinter»:
+    «s:"Print a std::stack or std::queue"»
+
+    «k:def» «f:__init__» («k:self», typename, val):
+        «k:self».typename = typename
+        «k:self».visualizer = gdb.default_visualizer(val[«s:'c'»])
+
+    «k:def» «f:children» («k:self»):
+        «k:return» «k:self».visualizer.children()
+
+    «k:def» «f:to_string» («k:self»):
+        «k:return» «s:'%s wrapping: %s'» % («k:self».typename,
+                                    «k:self».visualizer.to_string())
+
+    «k:def» «f:display_hint» («k:self»):
+        «k:if» «b:hasattr» («k:self».visualizer, «s:'display_hint'»):
+            «k:return» «k:self».visualizer.display_hint ()
+        «k:return» «c:None»
+
+«k:class» «t:RbtreeIterator»:
+    «k:def» «f:__init__»(«k:self», rbtree):
+        «k:self».size = rbtree[«s:'_M_t'»][«s:'_M_impl'»][«s:'_M_node_count'»]
+        «k:self».node = rbtree[«s:'_M_t'»][«s:'_M_impl'»][«s:'_M_header'»][«s:'_M_left'»]
+        «k:self».count = 0
+
+    «k:def» «f:__iter__»(«k:self»):
+        «k:return» «k:self»
+
+    «k:def» «f:__len__»(«k:self»):
+        «k:return» «b:int» («k:self».size)
+
+    «k:def» «f:next»(«k:self»):
+        «k:if» «k:self».count == «k:self».size:
+            «k:raise» «t:StopIteration»
+        result = «k:self».node
+        «k:self».count = «k:self».count + 1
+        «k:if» «k:self».count < «k:self».size:
+            «x:# Compute the next node.
+»            node = «k:self».node
+            «k:if» node.dereference()[«s:'_M_right'»]:
+                node = node.dereference()[«s:'_M_right'»]
+                «k:while» node.dereference()[«s:'_M_left'»]:
+                    node = node.dereference()[«s:'_M_left'»]
+            «k:else»:
+                parent = node.dereference()[«s:'_M_parent'»]
+                «k:while» node == parent.dereference()[«s:'_M_right'»]:
+                    node = parent
+                    parent = parent.dereference()[«s:'_M_parent'»]
+                «k:if» node.dereference()[«s:'_M_right'»] != parent:
+                    node = parent
+            «k:self».node = node
+        «k:return» result
+
+«x:# This is a pretty printer for std::_Rb_tree_iterator (which is
+# std::map::iterator), and has nothing to do with the RbtreeIterator
+# class above.
+»«k:class» «t:StdRbtreeIteratorPrinter»:
+    «s:"Print std::map::iterator"»
+
+    «k:def» «f:__init__» («k:self», typename, val):
+        «k:self».val = val
+
+    «k:def» «f:to_string» («k:self»):
+        typename = «b:str»(«k:self».val.type.strip_typedefs()) + «s:'::_Link_type'»
+        nodetype = gdb.lookup_type(typename).strip_typedefs()
+        «k:return» «k:self».val.cast(nodetype).dereference()[«s:'_M_value_field'»]
+
+«k:class» «t:StdDebugIteratorPrinter»:
+    «s:"Print a debug enabled version of an iterator"»
+
+    «k:def» «f:__init__» («k:self», typename, val):
+        «k:self».val = val
+
+    «x:# Just strip away the encapsulating __gnu_debug::_Safe_iterator
+»    «x:# and return the wrapped iterator value.
+»    «k:def» «f:to_string» («k:self»):
+        itype = «k:self».val.type.template_argument(0)
+        «k:return» «k:self».val[«s:'_M_current'»].cast(itype)
+
+«k:class» «t:StdMapPrinter»:
+    «s:"Print a std::map or std::multimap"»
+
+    «x:# Turn an RbtreeIterator into a pretty-print iterator.
+»    «k:class» «t:_iter»:
+        «k:def» «f:__init__»(«k:self», rbiter, «b:type»):
+            «k:self».rbiter = rbiter
+            «k:self».count = 0
+            «k:self».type = «b:type»
+
+        «k:def» «f:__iter__»(«k:self»):
+            «k:return» «k:self»
+
+        «k:def» «f:next»(«k:self»):
+            «k:if» «k:self».count % 2 == 0:
+                n = «k:self».rbiter.next()
+                n = n.cast(«k:self».type).dereference()[«s:'_M_value_field'»]
+                «k:self».pair = n
+                item = n[«s:'first'»]
+            «k:else»:
+                item = «k:self».pair[«s:'second'»]
+            result = («s:'[%d]'» % «k:self».count, item)
+            «k:self».count = «k:self».count + 1
+            «k:return» result
+
+    «k:def» «f:__init__» («k:self», typename, val):
+        «k:self».typename = typename
+        «k:self».val = val
+
+    «k:def» «f:to_string» («k:self»):
+        «k:return» «s:'%s with %d elements'» % («k:self».typename,
+                                        «b:len» (RbtreeIterator («k:self».val)))
+
+    «k:def» «f:children» («k:self»):
+        rep_type = find_type(«k:self».val.type, «s:'_Rep_type'»)
+        node = find_type(rep_type, «s:'_Link_type'»)
+        node = node.strip_typedefs()
+        «k:return» «k:self»._iter (RbtreeIterator («k:self».val), node)
+
+    «k:def» «f:display_hint» («k:self»):
+        «k:return» «s:'map'»
+
+«k:class» «t:StdSetPrinter»:
+    «s:"Print a std::set or std::multiset"»
+
+    «x:# Turn an RbtreeIterator into a pretty-print iterator.
+»    «k:class» «t:_iter»:
+        «k:def» «f:__init__»(«k:self», rbiter, «b:type»):
+            «k:self».rbiter = rbiter
+            «k:self».count = 0
+            «k:self».type = «b:type»
+
+        «k:def» «f:__iter__»(«k:self»):
+            «k:return» «k:self»
+
+        «k:def» «f:next»(«k:self»):
+            item = «k:self».rbiter.next()
+            item = item.cast(«k:self».type).dereference()[«s:'_M_value_field'»]
+            «x:# FIXME: this is weird ... what to do?
+»            «x:# Maybe a 'set' display hint?
+»            result = («s:'[%d]'» % «k:self».count, item)
+            «k:self».count = «k:self».count + 1
+            «k:return» result
+
+    «k:def» «f:__init__» («k:self», typename, val):
+        «k:self».typename = typename
+        «k:self».val = val
+
+    «k:def» «f:to_string» («k:self»):
+        «k:return» «s:'%s with %d elements'» % («k:self».typename,
+                                        «b:len» (RbtreeIterator («k:self».val)))
+
+    «k:def» «f:children» («k:self»):
+        rep_type = find_type(«k:self».val.type, «s:'_Rep_type'»)
+        node = find_type(rep_type, «s:'_Link_type'»)
+        node = node.strip_typedefs()
+        «k:return» «k:self»._iter (RbtreeIterator («k:self».val), node)
+
+«k:class» «t:StdBitsetPrinter»:
+    «s:"Print a std::bitset"»
+
+    «k:def» «f:__init__»(«k:self», typename, val):
+        «k:self».typename = typename
+        «k:self».val = val
+
+    «k:def» «f:to_string» («k:self»):
+        «x:# If template_argument handled values, we could print the
+»        «x:# size.  Or we could use a regexp on the type.
+»        «k:return» «s:'%s'» % («k:self».typename)
+
+    «k:def» «f:children» («k:self»):
+        words = «k:self».val[«s:'_M_w'»]
+        wtype = words.type
+
+        «x:# The _M_w member can be either an unsigned long, or an
+»        «x:# array.  This depends on the template specialization used.
+»        «x:# If it is a single long, convert to a single element list.
+»        «k:if» wtype.code == gdb.TYPE_CODE_ARRAY:
+            tsize = wtype.target ().sizeof
+        «k:else»:
+            words = [words]
+            tsize = wtype.sizeof 
+
+        nwords = wtype.sizeof / tsize
+        result = []
+        byte = 0
+        «k:while» byte < nwords:
+            w = words[byte]
+            bit = 0
+            «k:while» w != 0:
+                «k:if» (w & 1) != 0:
+                    «x:# Another spot where we could use 'set'?
+»                    result.append((«s:'[%d]'» % (byte * tsize * 8 + bit), 1))
+                bit = bit + 1
+                w = w >> 1
+            byte = byte + 1
+        «k:return» result
+
+«k:class» «t:StdDequePrinter»:
+    «s:"Print a std::deque"»
+
+    «k:class» «t:_iter»:
+        «k:def» «f:__init__»(«k:self», node, start, end, last, buffer_size):
+            «k:self».node = node
+            «k:self».p = start
+            «k:self».end = end
+            «k:self».last = last
+            «k:self».buffer_size = buffer_size
+            «k:self».count = 0
+
+        «k:def» «f:__iter__»(«k:self»):
+            «k:return» «k:self»
+
+        «k:def» «f:next»(«k:self»):
+            «k:if» «k:self».p == «k:self».last:
+                «k:raise» «t:StopIteration»
+
+            result = («s:'[%d]'» % «k:self».count, «k:self».p.dereference())
+            «k:self».count = «k:self».count + 1
+
+            «x:# Advance the 'cur' pointer.
+»            «k:self».p = «k:self».p + 1
+            «k:if» «k:self».p == «k:self».end:
+                «x:# If we got to the end of this bucket, move to the
+»                «x:# next bucket.
+»                «k:self».node = «k:self».node + 1
+                «k:self».p = «k:self».node[0]
+                «k:self».end = «k:self».p + «k:self».buffer_size
+
+            «k:return» result
+
+    «k:def» «f:__init__»(«k:self», typename, val):
+        «k:self».typename = typename
+        «k:self».val = val
+        «k:self».elttype = val.type.template_argument(0)
+        size = «k:self».elttype.sizeof
+        «k:if» size < 512:
+            «k:self».buffer_size = «b:int» (512 / size)
+        «k:else»:
+            «k:self».buffer_size = 1
+
+    «k:def» «f:to_string»(«k:self»):
+        start = «k:self».val[«s:'_M_impl'»][«s:'_M_start'»]
+        end = «k:self».val[«s:'_M_impl'»][«s:'_M_finish'»]
+
+        delta_n = end[«s:'_M_node'»] - start[«s:'_M_node'»] - 1
+        delta_s = start[«s:'_M_last'»] - start[«s:'_M_cur'»]
+        delta_e = end[«s:'_M_cur'»] - end[«s:'_M_first'»]
+
+        size = «k:self».buffer_size * delta_n + delta_s + delta_e
+
+        «k:return» «s:'%s with %d elements'» % («k:self».typename, «b:long» (size))
+
+    «k:def» «f:children»(«k:self»):
+        start = «k:self».val[«s:'_M_impl'»][«s:'_M_start'»]
+        end = «k:self».val[«s:'_M_impl'»][«s:'_M_finish'»]
+        «k:return» «k:self»._iter(start[«s:'_M_node'»], start[«s:'_M_cur'»], start[«s:'_M_last'»],
+                          end[«s:'_M_cur'»], «k:self».buffer_size)
+
+    «k:def» «f:display_hint» («k:self»):
+        «k:return» «s:'array'»
+
+«k:class» «t:StdDequeIteratorPrinter»:
+    «s:"Print std::deque::iterator"»
+
+    «k:def» «f:__init__»(«k:self», typename, val):
+        «k:self».val = val
+
+    «k:def» «f:to_string»(«k:self»):
+        «k:return» «k:self».val[«s:'_M_cur'»].dereference()
+
+«k:class» «t:StdStringPrinter»:
+    «s:"Print a std::basic_string of some kind"»
+
+    «k:def» «f:__init__»(«k:self», typename, val):
+        «k:self».val = val
+
+    «k:def» «f:to_string»(«k:self»):
+        «x:# Make sure &string works, too.
+»        «b:type» = «k:self».val.type
+        «k:if» «b:type».code == gdb.TYPE_CODE_REF:
+            «b:type» = «b:type».target ()
+
+        «x:# Calculate the length of the string so that to_string returns
+»        «x:# the string according to length, not according to first null
+»        «x:# encountered.
+»        ptr = «k:self».val [«s:'_M_dataplus'»][«s:'_M_p'»]
+        realtype = «b:type».unqualified ().strip_typedefs ()
+        reptype = gdb.lookup_type («b:str» (realtype) + «s:'::_Rep'»).pointer ()
+        header = ptr.cast(reptype) - 1
+        «b:len» = header.dereference ()[«s:'_M_length'»]
+        «k:if» «b:hasattr»(ptr, «s:"lazy_string"»):
+            «k:return» ptr.lazy_string (length = «b:len»)
+        «k:return» ptr.string (length = «b:len»)
+
+    «k:def» «f:display_hint» («k:self»):
+        «k:return» «s:'string'»
+
+«k:class» «t:Tr1HashtableIterator»:
+    «k:def» «f:__init__» («k:self», «b:hash»):
+        «k:self».buckets = «b:hash»[«s:'_M_buckets'»]
+        «k:self».bucket = 0
+        «k:self».bucket_count = «b:hash»[«s:'_M_bucket_count'»]
+        «k:self».node_type = find_type(«b:hash».type, «s:'_Node'»).pointer()
+        «k:self».node = 0
+        «k:while» «k:self».bucket != «k:self».bucket_count:
+            «k:self».node = «k:self».buckets[«k:self».bucket]
+            «k:if» «k:self».node:
+                «k:break»
+            «k:self».bucket = «k:self».bucket + 1        
+
+    «k:def» «f:__iter__» («k:self»):
+        «k:return» «k:self»
+
+    «k:def» «f:next» («k:self»):
+        «k:if» «k:self».node == 0:
+            «k:raise» «t:StopIteration»
+        node = «k:self».node.cast(«k:self».node_type)
+        result = node.dereference()[«s:'_M_v'»]
+        «k:self».node = node.dereference()[«s:'_M_next'»];
+        «k:if» «k:self».node == 0:
+            «k:self».bucket = «k:self».bucket + 1
+            «k:while» «k:self».bucket != «k:self».bucket_count:
+                «k:self».node = «k:self».buckets[«k:self».bucket]
+                «k:if» «k:self».node:
+                    «k:break»
+                «k:self».bucket = «k:self».bucket + 1
+        «k:return» result
+
+«k:class» «t:StdHashtableIterator»:
+    «k:def» «f:__init__»(«k:self», «b:hash»):
+        «k:self».node = «b:hash»[«s:'_M_before_begin'»][«s:'_M_nxt'»]
+        «k:self».node_type = find_type(«b:hash».type, «s:'__node_type'»).pointer()
+
+    «k:def» «f:__iter__»(«k:self»):
+        «k:return» «k:self»
+
+    «k:def» «f:next»(«k:self»):
+        «k:if» «k:self».node == 0:
+            «k:raise» «t:StopIteration»
+        elt = «k:self».node.cast(«k:self».node_type).dereference()
+        «k:self».node = elt[«s:'_M_nxt'»]
+        valptr = elt[«s:'_M_storage'»].address
+        valptr = valptr.cast(elt.type.template_argument(0).pointer())
+        «k:return» valptr.dereference()
+
+«k:class» «t:Tr1UnorderedSetPrinter»:
+    «s:"Print a tr1::unordered_set"»
+
+    «k:def» «f:__init__» («k:self», typename, val):
+        «k:self».typename = typename
+        «k:self».val = val
+
+    «k:def» «f:hashtable» («k:self»):
+        «k:if» «k:self».typename.startswith(«s:'std::tr1'»):
+            «k:return» «k:self».val
+        «k:return» «k:self».val[«s:'_M_h'»]
+
+    «k:def» «f:to_string» («k:self»):
+        «k:return» «s:'%s with %d elements'» % («k:self».typename, «k:self».hashtable()[«s:'_M_element_count'»])
+
+    «t:@staticmethod»
+    «k:def» «f:format_count» (i):
+        «k:return» «s:'[%d]'» % i
+
+    «k:def» «f:children» («k:self»):
+        counter = itertools.imap («k:self».format_count, itertools.count())
+        «k:if» «k:self».typename.startswith(«s:'std::tr1'»):
+            «k:return» itertools.izip (counter, Tr1HashtableIterator («k:self».hashtable()))
+        «k:return» itertools.izip (counter, StdHashtableIterator («k:self».hashtable()))
+
+«k:class» «t:Tr1UnorderedMapPrinter»:
+    «s:"Print a tr1::unordered_map"»
+
+    «k:def» «f:__init__» («k:self», typename, val):
+        «k:self».typename = typename
+        «k:self».val = val
+
+    «k:def» «f:hashtable» («k:self»):
+        «k:if» «k:self».typename.startswith(«s:'std::tr1'»):
+            «k:return» «k:self».val
+        «k:return» «k:self».val[«s:'_M_h'»]
+
+    «k:def» «f:to_string» («k:self»):
+        «k:return» «s:'%s with %d elements'» % («k:self».typename, «k:self».hashtable()[«s:'_M_element_count'»])
+
+    «t:@staticmethod»
+    «k:def» «f:flatten» («b:list»):
+        «k:for» elt «k:in» «b:list»:
+            «k:for» i «k:in» elt:
+                «k:yield» i
+
+    «t:@staticmethod»
+    «k:def» «f:format_one» (elt):
+        «k:return» (elt[«s:'first'»], elt[«s:'second'»])
+
+    «t:@staticmethod»
+    «k:def» «f:format_count» (i):
+        «k:return» «s:'[%d]'» % i
+
+    «k:def» «f:children» («k:self»):
+        counter = itertools.imap («k:self».format_count, itertools.count())
+        «x:# Map over the hash table and flatten the result.
+»        «k:if» «k:self».typename.startswith(«s:'std::tr1'»):
+            data = «k:self».flatten (itertools.imap («k:self».format_one, Tr1HashtableIterator («k:self».hashtable())))
+            «x:# Zip the two iterators together.
+»            «k:return» itertools.izip (counter, data)
+        data = «k:self».flatten (itertools.imap («k:self».format_one, StdHashtableIterator («k:self».hashtable())))
+        «x:# Zip the two iterators together.
+»        «k:return» itertools.izip (counter, data)
+        
+
+    «k:def» «f:display_hint» («k:self»):
+        «k:return» «s:'map'»
+
+«k:class» «t:StdForwardListPrinter»:
+    «s:"Print a std::forward_list"»
+
+    «k:class» «t:_iterator»:
+        «k:def» «f:__init__»(«k:self», nodetype, head):
+            «k:self».nodetype = nodetype
+            «k:self».base = head[«s:'_M_next'»]
+            «k:self».count = 0
+
+        «k:def» «f:__iter__»(«k:self»):
+            «k:return» «k:self»
+
+        «k:def» «f:next»(«k:self»):
+            «k:if» «k:self».base == 0:
+                «k:raise» «t:StopIteration»
+            elt = «k:self».base.cast(«k:self».nodetype).dereference()
+            «k:self».base = elt[«s:'_M_next'»]
+            count = «k:self».count
+            «k:self».count = «k:self».count + 1
+            valptr = elt[«s:'_M_storage'»].address
+o           valptr = valptr.cast(elt.type.template_argument(0).pointer())
+            «k:return» («s:'[%d]'» % count, valptr.dereference())
+
+    «k:def» «f:__init__»(«k:self», typename, val):
+        «k:self».val = val
+        «k:self».typename = typename
+
+    «k:def» «f:children»(«k:self»):
+        nodetype = find_type(«k:self».val.type, «s:'_Node'»)
+        nodetype = nodetype.strip_typedefs().pointer()
+        «k:return» «k:self»._iterator(nodetype, «k:self».val[«s:'_M_impl'»][«s:'_M_head'»])
+
+    «k:def» «f:to_string»(«k:self»):
+        «k:if» «k:self».val[«s:'_M_impl'»][«s:'_M_head'»][«s:'_M_next'»] == 0:
+            «k:return» «s:'empty %s'» % («k:self».typename)
+        «k:return» «s:'%s'» % («k:self».typename)
+
+
+«x:# A "regular expression" printer which conforms to the
+# "SubPrettyPrinter" protocol from gdb.printing.
+»«k:class» «t:RxPrinter»(«b:object»):
+    «k:def» «f:__init__»(«k:self», name, function):
+        «b:super»(RxPrinter, «k:self»).__init__()
+        «k:self».name = name
+        «k:self».function = function
+        «k:self».enabled = «k:True»
+
+    «k:def» «f:invoke»(«k:self», value):
+        «k:if» «k:not» «k:self».enabled:
+            «k:return» «c:None»
+
+        «k:if» value.type.code == gdb.TYPE_CODE_REF:
+            «k:if» «b:hasattr»(gdb.Value,«s:"referenced_value"»):
+                value = value.referenced_value()
+
+        «k:return» «k:self».function(«k:self».name, value)
+
+«x:# A pretty-printer that conforms to the "PrettyPrinter" protocol from
+# gdb.printing.  It can also be used directly as an old-style printer.
+»«k:class» «t:Printer»(«b:object»):
+    «k:def» «f:__init__»(«k:self», name):
+        «b:super»(Printer, «k:self»).__init__()
+        «k:self».name = name
+        «k:self».subprinters = []
+        «k:self».lookup = {}
+        «k:self».enabled = «k:True»
+        «k:self».compiled_rx = re.compile(«s:'^([a-zA-Z0-9_:]+)<.*>$'»)
+
+    «k:def» «f:add»(«k:self», name, function):
+        «x:# A small sanity check.
+»        «x:# FIXME
+»        «k:if» «k:not» «k:self».compiled_rx.match(name + «s:'<>'»):
+            «k:raise» «t:ValueError», «s:'libstdc++ programming error: "%s" does not match'» % name
+        printer = RxPrinter(name, function)
+        «k:self».subprinters.append(printer)
+        «k:self».lookup[name] = printer
+
+    «x:# Add a name using _GLIBCXX_BEGIN_NAMESPACE_VERSION.
+»    «k:def» «f:add_version»(«k:self», base, name, function):
+        «k:self».add(base + name, function)
+        «k:self».add(base + «s:'__7::'» + name, function)
+
+    «x:# Add a name using _GLIBCXX_BEGIN_NAMESPACE_CONTAINER.
+»    «k:def» «f:add_container»(«k:self», base, name, function):
+        «k:self».add_version(base, name, function)
+        «k:self».add_version(base + «s:'__cxx1998::'», name, function)
+
+    «t:@staticmethod»
+    «k:def» «f:get_basic_type»(«b:type»):
+        «x:# If it points to a reference, get the reference.
+»        «k:if» «b:type».code == gdb.TYPE_CODE_REF:
+            «b:type» = «b:type».target ()
+
+        «x:# Get the unqualified type, stripped of typedefs.
+»        «b:type» = «b:type».unqualified ().strip_typedefs ()
+
+        «k:return» «b:type».tag
+
+    «k:def» «f:__call__»(«k:self», val):
+        typename = «k:self».get_basic_type(val.type)
+        «k:if» «k:not» typename:
+            «k:return» «c:None»
+
+        «x:# All the types we match are template types, so we can use a
+»        «x:# dictionary.
+»        match = «k:self».compiled_rx.match(typename)
+        «k:if» «k:not» match:
+            «k:return» «c:None»
+
+        basename = match.group(1)
+
+        «k:if» val.type.code == gdb.TYPE_CODE_REF:
+            «k:if» «b:hasattr»(gdb.Value,«s:"referenced_value"»):
+                val = val.referenced_value()
+
+        «k:if» basename «k:in» «k:self».lookup:
+            «k:return» «k:self».lookup[basename].invoke(val)
+
+        «x:# Cannot find a pretty printer.  Return None.
+»        «k:return» «c:None»
+
+«v:libstdcxx_printer» = «c:None»
+
+«k:class» «t:FilteringTypePrinter»(«b:object»):
+    «k:def» «f:__init__»(«k:self», match, name):
+        «k:self».match = match
+        «k:self».name = name
+        «k:self».enabled = «k:True»
+
+    «k:class» «t:_recognizer»(«b:object»):
+        «k:def» «f:__init__»(«k:self», match, name):
+            «k:self».match = match
+            «k:self».name = name
+            «k:self».type_obj = «c:None»
+
+        «k:def» «f:recognize»(«k:self», type_obj):
+            «k:if» type_obj.tag «k:is» «c:None»:
+                «k:return» «c:None»
+
+            «k:if» «k:self».type_obj «k:is» «c:None»:
+                «k:if» «k:not» «k:self».match «k:in» type_obj.tag:
+                    «x:# Filter didn't match.
+»                    «k:return» «c:None»
+                «k:try»:
+                    «k:self».type_obj = gdb.lookup_type(«k:self».name).strip_typedefs()
+                «k:except»:
+                    «k:pass»
+            «k:if» «k:self».type_obj == type_obj:
+                «k:return» «k:self».name
+            «k:return» «c:None»
+
+    «k:def» «f:instantiate»(«k:self»):
+        «k:return» «k:self»._recognizer(«k:self».match, «k:self».name)
+
+«k:def» «f:add_one_type_printer»(obj, match, name):
+    printer = FilteringTypePrinter(match, «s:'std::'» + name)
+    gdb.types.register_type_printer(obj, printer)
+
+«k:def» «f:register_type_printers»(obj):
+    «k:global» _use_type_printing
+
+    «k:if» «k:not» _use_type_printing:
+        «k:return»
+
+    «k:for» pfx «k:in» («s:''», «s:'w'»):
+        add_one_type_printer(obj, «s:'basic_string'», pfx + «s:'string'»)
+        add_one_type_printer(obj, «s:'basic_ios'», pfx + «s:'ios'»)
+        add_one_type_printer(obj, «s:'basic_streambuf'», pfx + «s:'streambuf'»)
+        add_one_type_printer(obj, «s:'basic_istream'», pfx + «s:'istream'»)
+        add_one_type_printer(obj, «s:'basic_ostream'», pfx + «s:'ostream'»)
+        add_one_type_printer(obj, «s:'basic_iostream'», pfx + «s:'iostream'»)
+        add_one_type_printer(obj, «s:'basic_stringbuf'», pfx + «s:'stringbuf'»)
+        add_one_type_printer(obj, «s:'basic_istringstream'»,
+                                 pfx + «s:'istringstream'»)
+        add_one_type_printer(obj, «s:'basic_ostringstream'»,
+                                 pfx + «s:'ostringstream'»)
+        add_one_type_printer(obj, «s:'basic_stringstream'»,
+                                 pfx + «s:'stringstream'»)
+        add_one_type_printer(obj, «s:'basic_filebuf'», pfx + «s:'filebuf'»)
+        add_one_type_printer(obj, «s:'basic_ifstream'», pfx + «s:'ifstream'»)
+        add_one_type_printer(obj, «s:'basic_ofstream'», pfx + «s:'ofstream'»)
+        add_one_type_printer(obj, «s:'basic_fstream'», pfx + «s:'fstream'»)
+        add_one_type_printer(obj, «s:'basic_regex'», pfx + «s:'regex'»)
+        add_one_type_printer(obj, «s:'sub_match'», pfx + «s:'csub_match'»)
+        add_one_type_printer(obj, «s:'sub_match'», pfx + «s:'ssub_match'»)
+        add_one_type_printer(obj, «s:'match_results'», pfx + «s:'cmatch'»)
+        add_one_type_printer(obj, «s:'match_results'», pfx + «s:'smatch'»)
+        add_one_type_printer(obj, «s:'regex_iterator'», pfx + «s:'cregex_iterator'»)
+        add_one_type_printer(obj, «s:'regex_iterator'», pfx + «s:'sregex_iterator'»)
+        add_one_type_printer(obj, «s:'regex_token_iterator'»,
+                                 pfx + «s:'cregex_token_iterator'»)
+        add_one_type_printer(obj, «s:'regex_token_iterator'»,
+                                 pfx + «s:'sregex_token_iterator'»)
+
+    «x:# Note that we can't have a printer for std::wstreampos, because
+»    «x:# it shares the same underlying type as std::streampos.
+»    add_one_type_printer(obj, «s:'fpos'», «s:'streampos'»)
+    add_one_type_printer(obj, «s:'basic_string'», «s:'u16string'»)
+    add_one_type_printer(obj, «s:'basic_string'», «s:'u32string'»)
+
+    «k:for» dur «k:in» («s:'nanoseconds'», «s:'microseconds'», «s:'milliseconds'»,
+                «s:'seconds'», «s:'minutes'», «s:'hours'»):
+        add_one_type_printer(obj, «s:'duration'», dur)
+
+    add_one_type_printer(obj, «s:'linear_congruential_engine'», «s:'minstd_rand0'»)
+    add_one_type_printer(obj, «s:'linear_congruential_engine'», «s:'minstd_rand'»)
+    add_one_type_printer(obj, «s:'mersenne_twister_engine'», «s:'mt19937'»)
+    add_one_type_printer(obj, «s:'mersenne_twister_engine'», «s:'mt19937_64'»)
+    add_one_type_printer(obj, «s:'subtract_with_carry_engine'», «s:'ranlux24_base'»)
+    add_one_type_printer(obj, «s:'subtract_with_carry_engine'», «s:'ranlux48_base'»)
+    add_one_type_printer(obj, «s:'discard_block_engine'», «s:'ranlux24'»)
+    add_one_type_printer(obj, «s:'discard_block_engine'», «s:'ranlux48'»)
+    add_one_type_printer(obj, «s:'shuffle_order_engine'», «s:'knuth_b'»)
+
+«k:def» «f:register_libstdcxx_printers» (obj):
+    «s:"Register libstdc++ pretty-printers with objfile Obj."»
+
+    «k:global» _use_gdb_pp
+    «k:global» libstdcxx_printer
+
+    «k:if» _use_gdb_pp:
+        gdb.printing.register_pretty_printer(obj, libstdcxx_printer)
+    «k:else»:
+        «k:if» obj «k:is» «c:None»:
+            obj = gdb
+        obj.pretty_printers.append(libstdcxx_printer)
+
+    register_type_printers(obj)
+
+«k:def» «f:build_libstdcxx_dictionary» ():
+    «k:global» libstdcxx_printer
+
+    libstdcxx_printer = Printer(«s:"libstdc++-v6"»)
+
+    «x:# For _GLIBCXX_BEGIN_NAMESPACE_VERSION.
+»    vers = «s:'(__7::)?'»
+    «x:# For _GLIBCXX_BEGIN_NAMESPACE_CONTAINER.
+»    container = «s:'(__cxx1998::'» + vers + «s:')?'»
+
+    «x:# libstdc++ objects requiring pretty-printing.
+»    «x:# In order from:
+»    «x:# http://gcc.gnu.org/onlinedocs/libstdc++/latest-doxygen/a01847.html
+»    libstdcxx_printer.add_version(«s:'std::'», «s:'basic_string'», StdStringPrinter)
+    libstdcxx_printer.add_container(«s:'std::'», «s:'bitset'», StdBitsetPrinter)
+    libstdcxx_printer.add_container(«s:'std::'», «s:'deque'», StdDequePrinter)
+    libstdcxx_printer.add_container(«s:'std::'», «s:'list'», StdListPrinter)
+    libstdcxx_printer.add_container(«s:'std::'», «s:'map'», StdMapPrinter)
+    libstdcxx_printer.add_container(«s:'std::'», «s:'multimap'», StdMapPrinter)
+    libstdcxx_printer.add_container(«s:'std::'», «s:'multiset'», StdSetPrinter)
+    libstdcxx_printer.add_version(«s:'std::'», «s:'priority_queue'»,
+                                  StdStackOrQueuePrinter)
+    libstdcxx_printer.add_version(«s:'std::'», «s:'queue'», StdStackOrQueuePrinter)
+    libstdcxx_printer.add_version(«s:'std::'», «s:'tuple'», StdTuplePrinter)
+    libstdcxx_printer.add_container(«s:'std::'», «s:'set'», StdSetPrinter)
+    libstdcxx_printer.add_version(«s:'std::'», «s:'stack'», StdStackOrQueuePrinter)
+    libstdcxx_printer.add_version(«s:'std::'», «s:'unique_ptr'», UniquePointerPrinter)
+    libstdcxx_printer.add_container(«s:'std::'», «s:'vector'», StdVectorPrinter)
+    «x:# vector<bool>
+»
+    «x:# Printer registrations for classes compiled with -D_GLIBCXX_DEBUG.
+»    libstdcxx_printer.add(«s:'std::__debug::bitset'», StdBitsetPrinter)
+    libstdcxx_printer.add(«s:'std::__debug::deque'», StdDequePrinter)
+    libstdcxx_printer.add(«s:'std::__debug::list'», StdListPrinter)
+    libstdcxx_printer.add(«s:'std::__debug::map'», StdMapPrinter)
+    libstdcxx_printer.add(«s:'std::__debug::multimap'», StdMapPrinter)
+    libstdcxx_printer.add(«s:'std::__debug::multiset'», StdSetPrinter)
+    libstdcxx_printer.add(«s:'std::__debug::priority_queue'»,
+                          StdStackOrQueuePrinter)
+    libstdcxx_printer.add(«s:'std::__debug::queue'», StdStackOrQueuePrinter)
+    libstdcxx_printer.add(«s:'std::__debug::set'», StdSetPrinter)
+    libstdcxx_printer.add(«s:'std::__debug::stack'», StdStackOrQueuePrinter)
+    libstdcxx_printer.add(«s:'std::__debug::unique_ptr'», UniquePointerPrinter)
+    libstdcxx_printer.add(«s:'std::__debug::vector'», StdVectorPrinter)
+
+    «x:# These are the TR1 and C++0x printers.
+»    «x:# For array - the default GDB pretty-printer seems reasonable.
+»    libstdcxx_printer.add_version(«s:'std::'», «s:'shared_ptr'», SharedPointerPrinter)
+    libstdcxx_printer.add_version(«s:'std::'», «s:'weak_ptr'», SharedPointerPrinter)
+    libstdcxx_printer.add_container(«s:'std::'», «s:'unordered_map'»,
+                                    Tr1UnorderedMapPrinter)
+    libstdcxx_printer.add_container(«s:'std::'», «s:'unordered_set'»,
+                                    Tr1UnorderedSetPrinter)
+    libstdcxx_printer.add_container(«s:'std::'», «s:'unordered_multimap'»,
+                                    Tr1UnorderedMapPrinter)
+    libstdcxx_printer.add_container(«s:'std::'», «s:'unordered_multiset'»,
+                                    Tr1UnorderedSetPrinter)
+    libstdcxx_printer.add_container(«s:'std::'», «s:'forward_list'»,
+                                    StdForwardListPrinter)
+
+    libstdcxx_printer.add_version(«s:'std::tr1::'», «s:'shared_ptr'», SharedPointerPrinter)
+    libstdcxx_printer.add_version(«s:'std::tr1::'», «s:'weak_ptr'», SharedPointerPrinter)
+    libstdcxx_printer.add_version(«s:'std::tr1::'», «s:'unordered_map'»,
+                                  Tr1UnorderedMapPrinter)
+    libstdcxx_printer.add_version(«s:'std::tr1::'», «s:'unordered_set'»,
+                                  Tr1UnorderedSetPrinter)
+    libstdcxx_printer.add_version(«s:'std::tr1::'», «s:'unordered_multimap'»,
+                                  Tr1UnorderedMapPrinter)
+    libstdcxx_printer.add_version(«s:'std::tr1::'», «s:'unordered_multiset'»,
+                                  Tr1UnorderedSetPrinter)
+
+    «x:# These are the C++0x printer registrations for -D_GLIBCXX_DEBUG cases.
+»    «x:# The tr1 namespace printers do not seem to have any debug
+»    «x:# equivalents, so do no register them.
+»    libstdcxx_printer.add(«s:'std::__debug::unordered_map'»,
+                          Tr1UnorderedMapPrinter)
+    libstdcxx_printer.add(«s:'std::__debug::unordered_set'»,
+                          Tr1UnorderedSetPrinter)
+    libstdcxx_printer.add(«s:'std::__debug::unordered_multimap'»,
+                          Tr1UnorderedMapPrinter)
+    libstdcxx_printer.add(«s:'std::__debug::unordered_multiset'»,
+                          Tr1UnorderedSetPrinter)
+    libstdcxx_printer.add(«s:'std::__debug::forward_list'»,
+                          StdForwardListPrinter)
+
+
+    «x:# Extensions.
+»    libstdcxx_printer.add_version(«s:'__gnu_cxx::'», «s:'slist'», StdSlistPrinter)
+
+    «k:if» «k:True»:
+        «x:# These shouldn't be necessary, if GDB "print *i" worked.
+»        «x:# But it often doesn't, so here they are.
+»        libstdcxx_printer.add_container(«s:'std::'», «s:'_List_iterator'»,
+                                        StdListIteratorPrinter)
+        libstdcxx_printer.add_container(«s:'std::'», «s:'_List_const_iterator'»,
+                                        StdListIteratorPrinter)
+        libstdcxx_printer.add_version(«s:'std::'», «s:'_Rb_tree_iterator'»,
+                                      StdRbtreeIteratorPrinter)
+        libstdcxx_printer.add_version(«s:'std::'», «s:'_Rb_tree_const_iterator'»,
+                                      StdRbtreeIteratorPrinter)
+        libstdcxx_printer.add_container(«s:'std::'», «s:'_Deque_iterator'»,
+                                        StdDequeIteratorPrinter)
+        libstdcxx_printer.add_container(«s:'std::'», «s:'_Deque_const_iterator'»,
+                                        StdDequeIteratorPrinter)
+        libstdcxx_printer.add_version(«s:'__gnu_cxx::'», «s:'__normal_iterator'»,
+                                      StdVectorIteratorPrinter)
+        libstdcxx_printer.add_version(«s:'__gnu_cxx::'», «s:'_Slist_iterator'»,
+                                      StdSlistIteratorPrinter)
+
+        «x:# Debug (compiled with -D_GLIBCXX_DEBUG) printer
+»        «x:# registrations.  The Rb_tree debug iterator when unwrapped
+»        «x:# from the encapsulating __gnu_debug::_Safe_iterator does not
+»        «x:# have the __norm namespace. Just use the existing printer
+»        «x:# registration for that.
+»        libstdcxx_printer.add(«s:'__gnu_debug::_Safe_iterator'»,
+                              StdDebugIteratorPrinter)
+        libstdcxx_printer.add(«s:'std::__norm::_List_iterator'»,
+                              StdListIteratorPrinter)
+        libstdcxx_printer.add(«s:'std::__norm::_List_const_iterator'»,
+                              StdListIteratorPrinter)
+        libstdcxx_printer.add(«s:'std::__norm::_Deque_const_iterator'»,
+                              StdDequeIteratorPrinter)
+        libstdcxx_printer.add(«s:'std::__norm::_Deque_iterator'»,
+                              StdDequeIteratorPrinter)
+
+build_libstdcxx_dictionary ()

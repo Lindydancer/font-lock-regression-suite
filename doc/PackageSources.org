@@ -1,0 +1,27 @@
+* Sources
+
+** Java Script
+
+http://www.theater-kaiseraugst.ch/typo3conf/ext/powermail/Resources/Public/JavaScripts/tabs.js?1425988857
+
+License: GPL 3
+
+** Perl
+
+Ack -- A grep replacement
+
+http://beyondgrep.com/
+
+License: Artistic License v2.0
+
+** PostScript
+
+http://people.sc.fsu.edu/~jburkardt/data/ps/ps.html
+
+License: LGPL 3
+
+** Ruby
+
+http://i.loveruby.net/en/projects/setup/
+
+License: LGPL 2.1

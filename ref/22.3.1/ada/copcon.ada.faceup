@@ -1,0 +1,1981 @@
+«k:WITH»  «c:Ada.Numerics.Generic_Elementary_Functions,»
+      Text_IO,
+      Provide_partition_function,
+      Continuous_Opacity;           «m:-- »«x:exports  TYPE  Level_Arr
+»«k:PROCEDURE»  «f:Copcon»  «k:IS»
+
+  «m:--    »«x:Program to calculate wavelength- and depth-dependent continuous
+»  «m:--    »«x:opacities for input in Ada line synthesis programs provided by
+»  «m:--    »«x:M.J. Stift
+»  «m:--    »«x:opacity sources and structure largely taken from
+»  «m:--    »«x:Chmielewski, Publ. Obs. Geneve, Serie B, Fasc. 7 (1979)
+»  «m:--»«x:
+»  «m:--    »«x:Written 1996 by Martin J. Stift
+»  «m:--                    »«x:Institut fuer Astronomie
+»  «m:--                    »«x:Tuerkenschanzstr. 17
+»  «m:--                    »«x:A-1180 Wien
+»  «m:--                    »«x:AUSTRIA
+»  «m:--»«x:
+»  «m:--                    »«x:e-mail:  stift@astro.univie.ac.at
+»  «m:--»«x:
+»  «m:--    »«x:This program is free software; you can redistribute it and/or modify
+»  «m:--    »«x:it under the terms of the GNU General Public License as published by
+»  «m:--    »«x:the Free Software Foundation; either version 2 of the License, or
+»  «m:--    »«x:(at your option) any later version.
+»  «m:--»«x:
+»  «m:--    »«x:This program is distributed in the hope that it will be useful,
+»  «m:--    »«x:but WITHOUT ANY WARRANTY; without even the implied warranty of
+»  «m:--    »«x:MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+»  «m:--    »«x:GNU General Public License for more details.
+»  «m:--»«x:
+»  «m:--    »«x:You should have received a copy of the GNU General Public License
+»  «m:--    »«x:along with this program; if not, write to the Free Software
+»  «m:--    »«x:Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+»
+  No_real_digits : «k:CONSTANT»   := «c:11»;
+
+  Ilayer_a      : Integer;
+  U_2, U_4, U_5 : Text_IO.File_Type;
+
+  «k:PACKAGE»  «f:Int_IO»  «k:IS» «k:NEW»  «f:Text_IO.Integer_IO» (Integer);
+
+  «m:-------------------------------------------------------»«x:
+»  «k:PROCEDURE»  «f:Copcon_Main» (Ilayer_a : «k:IN» «t:Integer»)  «k:IS»
+
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    «k:TYPE»  «t:Real»    «k:IS» «k:DIGITS»  No_real_digits;
+
+    «k:TYPE»  «t:Real_Arr»  «k:IS» «k:ARRAY» (Integer «k:RANGE» <>)  «k:OF»  «t:Real»;
+
+    «k:PACKAGE» «f:Real_IO» «k:IS» «k:NEW» «f:Text_IO.FLOAT_IO» (Real);
+    «k:PACKAGE» «f:Math»    «k:IS» «k:NEW» «f:Ada.Numerics.Generic_Elementary_Functions» (Real);
+    «k:USE»     «c:Math»;
+    «k:PACKAGE» «f:Opac»    «k:IS» «k:NEW» «f:Continuous_Opacity»(Real);
+    «k:PACKAGE» «f:Part»    «k:IS» «k:NEW» «f:Provide_partition_function» (Real, Real_Arr);
+
+    «k:TYPE»  «t:Atom_type»  «k:IS» «k:RECORD»
+      Isyb  : Integer;  «m:-- »«x:Identification
+»      Eps_g : Real;  «m:-- »«x:Abund., IAU Comm. 12, Grenoble, 1976 (AB(HE) = 0.1).
+»      Eps_k : Real;  «m:-- »«x:Abund.  according to Kurucz (1979)
+»      Mass  : Real;  «m:-- »«x:Atomic masses, Allen, Astrophysical Quantities (1973).
+»    «k:END» «k:RECORD»;
+
+    «k:TYPE»  «t:Phys_Var_type»  «k:IS» «k:RECORD»
+      Tau    : Real;
+      Temp   : Real;
+      Theta  : Real;
+      P_elec : Real;
+      P_gas  : Real;
+      X      : Real;
+      Rho    : Real;
+      Rho_x  : Real;
+      Kappa  : Real;
+    «k:END» «k:RECORD»;
+
+    «k:TYPE»  «t:Concentration_type»  «k:IS»  «k:RECORD»
+      HI  : Real;
+      HII : Real;
+      Hm  : Real;
+      H2p : Real;
+      H2  : Real;
+    «k:END» «k:RECORD»;
+
+    cLight     : «k:CONSTANT» «t:Real»  := «c:2».9979E18;
+    cRydberg   : «k:CONSTANT» «t:Real»  := «c:13.595»;         «m:-- »«x:eV
+»    cBoltzmann : «k:CONSTANT» «t:Real»  := «c:1».380622E-«c:16»;   «m:-- »«x:erg K^-1
+»    cAtMass    : «k:CONSTANT» «t:Real»  := «c:1».66019E-«c:24»;
+    cStefan    : «k:CONSTANT» «t:Real»  := «c:7».564E-«c:15»;
+    Thomson    : «k:CONSTANT» «t:Real»  := «c:66.52»;
+
+    No_elements : «k:CONSTANT» «t:Integer» := Part.No_elements;
+    Nma_max     : «k:CONSTANT» «t:Integer» := Part.Nma_max;
+    Iwave       : «k:CONSTANT» «t:Integer» := «c:55»;
+    Idepth      : «k:CONSTANT» «t:Integer» := «c:501»;
+    Ilayer      : «k:CONSTANT» «t:Integer» := Ilayer_a;
+
+    «k:TYPE»  «t:Press_table_type»  «k:IS» «k:ARRAY» («c:1»..Idepth)  «k:OF»  «t:Real»;
+
+    Lambda : «k:CONSTANT» «t:ARRAY» («c:1»..Iwave)  «k:OF»  «t:Real» :=
+      («c:3700.0», «c:3750.0», «c:3800.0», «c:3850.0», «c:3900.0», «c:3950.0», «c:4000.0», «c:4050.0»,
+       «c:4100.0», «c:4150.0», «c:4200.0», «c:4250.0», «c:4300.0», «c:4350.0», «c:4400.0», «c:4450.0»,
+       «c:4500.0», «c:4550.0», «c:4600.0», «c:4650.0», «c:4700.0», «c:4750.0», «c:4800.0», «c:4850.0»,
+       «c:4900.0», «c:4950.0», «c:5000.0», «c:5050.0», «c:5100.0», «c:5150.0», «c:5200.0», «c:5300.0»,
+       «c:5400.0», «c:5500.0», «c:5600.0», «c:5700.0», «c:5800.0», «c:5900.0», «c:6000.0», «c:6100.0»,
+       «c:6200.0», «c:6300.0», «c:6400.0», «c:6500.0», «c:6600.0», «c:6700.0», «c:6800.0», «c:6900.0»,
+       «c:7000.0», «c:7500.0», «c:8000.0», «c:8500.0», «c:9000.0», «c:9500.0»,«c:10000.0»         );
+
+    Atmos        : «k:ARRAY» («c:1»..Ilayer)  «k:OF»  «t:Phys_Var_type»;
+    Result, Phys : «k:ARRAY» («c:1»..Idepth)  «k:OF»  «t:Phys_Var_type»;
+
+    Abun, Zeta  : Real_Arr(«c:1»..No_elements);
+    QQ, Chi_ion : Real_Arr(«c:1»..Nma_max);
+
+    P_e_table, P_g_table  : Press_table_type;
+
+    X_new, Tau_new, Kappa_new, Temp_new, Rho_new,
+    Rhox_new, Pgas_new, Pelec_new, Tab_Theta,
+    Tab_Theta_1, Tab_Pelec, Tab_Pelec_1, Tab_Pgas,
+    Tab_Pgas_1, Tab_Kappa, Tab_Kappa_1, Tab_Rho,
+    Tab_Rho_1, Tab_Rhox, Tab_Rhox_1, Tab_X, Tab_X_1  : Press_table_type := («k:OTHERS» => «c:0.0»);
+
+    Conc      : Concentration_type;
+    Departure : Opac.Level_Arr      := («k:OTHERS» => «c:1.0»);
+
+    Flag             : BOOLEAN   := TRUE;
+    Stiffness, Ecart : Real      := «c:1.0»;
+    Sab, Amu         : Real      := «c:0.0»;
+
+    Rhox_min, Rhox_max, Kap, Density, Freq,
+    P_e, V_turb, Alkl, Salph, Cro, Log_g,
+    He, T_eff, Help, H_Tau, H_Rho, H_Kappa,
+    H_Temp, H_Pgas, H_Pelec                 : Real;
+    J_C, J_Mg, J_Al, J_Si, J_Fe,
+    In_Last, Ou_Last                        : Integer;
+    Pflag, Mat, M_dep                       : Integer         := «c:1»;
+    Input_File_name, Output_File_name       : String(«c:1..80»);
+    Option                                  : CHARACTER;
+
+    «m:--------------------------------------------»«x:
+»    «k:FUNCTION»  «f:Log10» (X : Real)  «k:RETURN»  Real  «k:IS»
+    «k:BEGIN»
+      «k:RETURN»  Log (X, «c:10.0»);
+    «k:END»  «f:Log10»;
+
+    «m:-------------------------------------------------------------»«x:
+»    «k:FUNCTION»  «f:Indic» (X0 : Real;
+                     X  :  Press_table_type;
+                     M  :  Integer         )  «k:RETURN»  Integer  «k:IS»
+
+      «m:--  »«x:Search for the position of a value X0 in a table of M monotonically
+»      «m:--  »«x:increasing or decreasing values of X.
+»
+      «m:--  »«x:If K = Indic (X0,X,M)     we have X0 between X(K) and X(K+1) or X0 = X(K).
+»      «m:--  »«x:If X0 is not in the table we have Indic = 1   if X0 is on the side of X(1)
+»      «m:--                                    »«x:Indic = M-1 if X0 is on the side of X(M)
+»
+      «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+      I  : Integer;
+      K  : Integer   := «c:1»;
+      N  : Integer   := M;
+      Dx : Real      := X(N) - X(«c:1»);
+    «k:BEGIN»
+      «k:LOOP»
+        «k:IF»  ((N-K-«c:1») = «c:0»)  «k:THEN»
+          «k:RETURN»  K;
+        «k:ELSE»
+          I := (K + N) / «c:2»;
+          «k:IF»  ((X(I)-X0)*Dx > «c:0.0»)  «k:THEN»
+            N := I;
+          «k:ELSE»
+            K := I;
+          «k:END» «k:IF»;
+        «k:END» «k:IF»;
+      «k:END» «k:LOOP»;
+    «k:END»  «f:Indic»;
+
+    «m:----------------------------------------------------------»«x:
+»    «k:FUNCTION»  «f:Ypol» (X0 : Real;
+                    X  : Press_table_type;
+                    Y  : Press_table_type;
+                    N  : Integer           )  «k:RETURN»  Real  «k:IS»
+
+      «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+      S, T, U, V, W : Real;
+      K             : Integer;
+
+      «m:--  »«x:Quadratic interpolation for the value X0 in the table (X(I),Y(I),I=1,N)
+»      «m:--  »«x:which is monotonically increasing or decreasing in X.
+»      «m:--  »«x:(the extrapolation is linear).
+»
+    «k:BEGIN»
+      K := Indic (X0, X, N);
+
+      «m:--  »«x:Linear interpolation
+»      «k:IF»  ((N = «c:2»)  «k:OR»  ((X(N)-X0)*(X(«c:1»)-X0) >= «c:0.0»))  «k:THEN»
+        «k:RETURN»  Y(K+«c:1») + (Y(K+«c:1»)-Y(K)) * (X0-X(K+«c:1»)) / (X(K+«c:1»)-X(K));
+
+      «m:--  »«x:Quadratic interpolation
+»      «k:ELSE»
+        K := Integer'Min (K, (N-«c:2»));
+        U := X0 - X(K);
+        V := X0 - X(K+«c:1»);
+        W := X0 - X(K+«c:2»);
+        S := (Y(K)   - Y(K+«c:1»)) / (X(K)   - X(K+«c:1»));
+        T := (Y(K+«c:1») - Y(K+«c:2»)) / (X(K+«c:1») - X(K+«c:2»));
+        «k:IF»  ((S*T) <= «c:0.0»)  «k:THEN»
+          «k:RETURN»  Y(K) + U * (S + V * (S-T) / (W-U));
+        «k:ELSE»
+          «k:RETURN»  Y(K) + U * S / («c:1.0» - V * (S-T) / (Y(K) - Y(K+«c:2»)));
+        «k:END» «k:IF»;
+      «k:END» «k:IF»;
+    «k:END»  «f:Ypol»;
+
+    «m:-----------------------------------------------»«x:
+»    «k:FUNCTION»  «f:Sign» (X, Y : Real )  «k:RETURN»  Real  «k:IS»
+    «k:BEGIN»
+      «k:IF»  (Y < «c:0.0»)  «k:THEN»
+        «k:RETURN»  -X;
+      «k:ELSE»
+        «k:RETURN»   X;
+      «k:END» «k:IF»;
+    «k:END»;
+
+    «m:---------------------------------------------»«x:
+»    «k:FUNCTION»  «f:Exp10» (X : Real )  «k:RETURN»  Real  «k:IS»
+      Ln10 : «k:CONSTANT» «t:Real»  := Log («c:10.0»);
+    «k:BEGIN»
+      «k:RETURN»  Exp (x * Ln10);
+    «k:END»;
+
+    «m:------------------------------»«x:
+»    «k:PROCEDURE»  «f:Equation_of_State»
+     (Temperature : «k:IN»   «t:Real»;
+      Elec_press  : «k:IN»   «t:Real»;
+      Gas_press   : «k:OUT»  «t:Real»;
+      Rho         : «k:OUT»  «t:Real»)  «k:IS»
+
+      «m:--  »«x:Physical and thermodynamical variables of a stellar atmosphere.
+»      «m:--  »«x:We are considering the ionisation equilibrium of the metals.
+»      «m:--  »«x:The partition function varies with temperature and electron pressure.
+»      «m:--  »«x:For hydrogen we consider ionisation and the formation of H-, H2, ET H2+ .
+»      «m:--  »«x:See Mihalas, Methods in computational Physics, Vol. 7, p. 8 (1967).
+»
+      «m:--  »«x:Input data:  Temperature and electronic pressure
+»      «m:--               »«x:Chemical composition. AB(J) gives the abundances of the NEL
+»      «m:--               »«x:elements in Atoms(J).Isyb. cAtMass ist the atomic mass unit.
+»
+      «m:--  »«x:Results : Gas pressure and density at each depth point
+»      «m:--            »«x:Concentrations, per cm3, of H I, H II, H- (Hm), H2 and H2+ (H2p).
+»      «m:--            »«x:At each depth point I : Zeta(I,J) = N0/U0 = Number of neutral
+»      «m:--            »«x:atoms per cm3 of the element J, divided by the partition function
+»      «m:--            »«x:of the netural metal.
+»      «m:--            »«x:Amen(J) = Abundance of the neutral metal J per neutral
+»      «m:--            »«x:hydrogen for a given point
+»
+      «m:--   »«x:Ionisation equilibrium of the metals
+»
+      «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+      Theta : Real  := «c:5040.4» / Temperature;
+      DChi  : Real  := «c:4».98E-«c:04» * Theta * Sqrt (Elec_press);
+      Saha  : Real  := «c:9.0799» - Log10 (Elec_press) - «c:1.0857» * Log (Theta);
+      Sanf  : Real  := «c:0.0»;
+
+      Nma                        : Integer;
+      A, B, C, D, E, Pn, Sn,
+      F_e, Sfi, HT, FJN, SNFJN,
+      c_H, c_H2, c_H2p, c_Hm,
+      G2, G3, F1, F2, F3, F4, F5 : Real;
+
+      Amen  : «k:ARRAY» («c:1»..No_elements)  «k:OF»  «t:Real»;
+
+      «m:-------------------------------------------------»«x:
+»      «k:FUNCTION»  «f:Root» (A, B, C : Real)  «k:RETURN»  Real  «k:IS»
+
+        «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+        «m:--  »«x:Physical root of a second order equation
+»
+        Eps     : Real    := «c:1».0E-«c:12»;
+        U, V, D : Real;
+      «k:BEGIN»
+        U := «c:4.0» * A * C;
+        V := B**«c:2»;
+        «k:IF»  («k:ABS» (U / V) - Eps > «c:0.0»)  «k:THEN»
+          D := Sign («c:1.0», A) * Sqrt (V - U) - B;
+          «k:RETURN»  D / («c:2.0» * A);
+        «k:ELSE»
+          «k:RETURN»  - C / B;
+        «k:END» «k:IF»;
+      «k:END»  «f:Root»;
+
+    «k:BEGIN»
+      «k:FOR»  J  «k:IN»  «t:2..No_elements»  «k:LOOP»
+        Part.Partition_Function (Iflag   => Pflag,
+                                 Iel     => Part.Atoms(J).Isyb,
+                                 DChi    => Dchi,
+                                 Theta   => Theta,
+                                 Q       => QQ,
+                                 Chi_ion => Chi_ion,
+                                 Nma     => Nma               );
+        Pn    := «c:0.0»;
+        Sn    := «c:0.0»;
+        SNFJN := «c:0.0»;
+        «k:FOR»  N  «k:IN»  «t:1..Nma»  «k:LOOP»
+          FJN   := QQ(N) * Exp10 (Pn);
+          SNFJN := SNFJN + (Real (N) - «c:1.0») * FJN;
+          Sn    := Sn + FJN;
+          Pn    := Pn + Saha + (Real (N) * DChi - Chi_ion(N)) * Theta;
+        «k:END» «k:LOOP»;
+        Zeta(J) := «c:1.0» / Sn;
+        Amen(J) := QQ(«c:1») / Sn;
+        Sanf    := Sanf + Abun(J) * SNFJN / Sn;
+      «k:END» «k:LOOP»;
+
+      «m:--  »«x:Ionisation and dissociation equilibrium of hydrogen
+»
+      Part.Partition_Function (Iflag   => Pflag,
+                               Iel     => Part.Atoms(«c:1»).Isyb,
+                               DChi    => Dchi,
+                               Theta   => Theta,
+                               Q       => QQ,
+                               Chi_ion => Chi_ion,
+                               Nma     => Nma         );
+
+      «m:--  »«x:equations (27) - (29), (30) for c_H is modified
+»
+      c_H   := Exp10 (Saha + (DChi - Chi_ion(«c:1»)) * Theta) *
+                     QQ(«c:2») / QQ(«c:1») * Elec_press;
+      c_H2  := Exp10 («c:12.533505» - Theta * («c:4.9251644» - Theta *
+                     («c:0.056191273» - Theta * «c:0.0032687661»)));
+      c_H2p := Exp10 («c:11.206998» - Theta * («c:2.7942767» + Theta *
+                     («c:0.079196803» - Theta * «c:0.024790744»)));
+      c_Hm  := Exp10 («c:-0.747» * Theta + «c:2.5» * Log10 (Temperature) + «c:0.1249»);
+
+      G2 := c_H / Elec_press;
+      G3 := Elec_press / c_Hm;
+      E  := G2 * c_H2 / c_H2p;
+      D  := G2 - G3;
+      C  := Elec_press / c_H2;
+      B  := «c:2.0» * («c:1.0» + E);
+      A  := «c:1.0» + G2 + G3;
+      F1 := Root (A => C * B**«c:2» + A * D * B - E * A**«c:2»,
+                  B => «c:2.0» * A * E - D * B + A * B * Sanf,
+                  C => -E - B * Sanf);
+      F2 := G2 * F1;
+      F3 := G3 * F1;
+      F5 := («c:1.0» - A * F1) / B;
+      F4 := E * F5;
+
+      «m:--  »«x:equations (35) and (36)
+»      «m:--  »«x:HT denotes number density of hydrogen if it were all in atomic form
+»
+      F_e       := F2 - F3 + F4 + Sanf;
+      Sfi       := F1 + F2 + F3 + F4 + F5;
+      Gas_press := Exp (Log (Elec_press) + Log («c:1.0» + (Sfi + Sab) / F_e));
+      HT        := Elec_press / F_e / (cBoltzmann * Temperature);
+      Rho       := cAtMass * Amu * HT;
+
+      Conc.HI  := F1 * HT;
+      Conc.HII := F2 * HT;
+      Conc.Hm  := F3 * HT;
+      Conc.H2p := F4 * HT;
+      Conc.H2  := F5 * HT;
+
+      «k:FOR»  J  «k:IN»  «t:2..No_elements»  «k:LOOP»
+        Zeta(J) := Zeta(J) * Abun(J) * HT;
+        Amen(J) := Amen(J) * Abun(J) / F1;
+      «k:END» «k:LOOP»;
+
+    «k:END»  «f:Equation_of_State»;
+
+    «m:-------------------------------------------------»«x:
+»    «k:PROCEDURE»  «f:Model» (Input_File_name  : String;
+                      Output_File_name : String )  «k:IS»
+
+      Dum_1, Dum_2 : Real;
+      Read_string  : String («c:1..4»);
+      I_Teff       : Integer;
+    «k:BEGIN»
+
+      «m:--  »«x:Read title, number of depth points, T_eff, Log g, helium abundance
+»      «m:--  »«x:and turbulence
+»
+      Text_IO.Open  (U_5, Text_IO.In_File,  Input_File_name);
+      Text_IO.Create(U_4, Text_IO.Out_File, Output_File_name);
+
+      Text_IO.Set_Col  (U_5, «c:5»);
+      Int_IO.Get       (U_5, I_Teff, WIDTH => «c:7»);
+      Text_IO.Set_Col  (U_5, «c:22»);
+      Real_IO.Get      (U_5, Log_g);
+      Text_IO.Skip_Line(U_5);
+
+      T_eff := Real (I_Teff);
+      He    := «c:0.1»;
+
+      «k:LOOP»
+        Text_IO.Get (U_5, Read_string);
+        «k:EXIT» «k:WHEN»  (Read_string = «s:"READ"»);
+        Text_IO.Skip_Line(U_5);
+      «k:END» «k:LOOP»;
+      Text_IO.Set_Col  (U_5, «c:11»);
+      Int_IO.Get       (U_5, M_dep);
+      Text_IO.Skip_Line(U_5);
+
+      Salph := Sab + Abun(«c:1»);
+      Cro   := cAtMass * Amu / Salph;
+      «k:FOR»  I  «k:IN»  «t:1..M_dep»  «k:LOOP»
+        Real_IO.Get (U_5, Atmos(I).Rho_x);
+        Real_IO.Get (U_5, Atmos(I).Temp);
+        Real_IO.Get (U_5, Atmos(I).P_gas);
+        Real_IO.Get (U_5, Atmos(I).P_elec);
+        Real_IO.Get (U_5, Dum_1);
+        Real_IO.Get (U_5, Dum_2);
+        Real_IO.Get (U_5, V_turb);
+        Atmos(I).P_elec := Atmos(I).P_elec * Atmos(I).Temp * cBoltzmann;
+        Text_IO.Skip_Line (U_5);
+      «k:END» «k:LOOP»;
+      V_turb := V_turb * «c:1».0e-«c:5»;
+    «k:END»  «f:Model»;
+
+    «m:----------------------------------------------------»«x:
+»    «k:FUNCTION»  «f:Opacity» (Freq : Real;
+                       Temp : Real;
+                       P_e  : Real )  «k:RETURN»  Real  «k:IS»
+
+      «m:--  »«x:Continuous opacities at the frequency Freq, at a given point of the
+»      «m:--  »«x:atmosphere with temperature Temp and electron pressure P_e.
+»      «m:--  »«x:Ecart is the departure coefficient from LTE of the ground level of hydrogen
+»      «m:--  »«x:Opacities due to the different forms of hydrogen are calculated according
+»      «m:--  »«x:to the routines of Carbon and Gingerich in Gingerich, ed. (1969) "Theory
+»      «m:--  »«x:and observation of normal stellar atmospheres" (Cambridge, MIT Press).
+»
+      «m:--  »«x:For the photoionisation of hydrogen the departure from LTE of the
+»      «m:--  »«x:ground level population is taken into account following Gingerich et al.,
+»      «m:--  »«x:Solar Physics 18, 347 (1971).
+»      «m:--  »«x:Opacities due to photoionisation of neutral metals are given by
+»      «m:--  »«x:Vernazza, Avrett and Loeser, ApJS, 30, 1 (1976).
+»      «m:--  »«x:Result : Kappa gives the opacity per cm3 (in cm-1)
+»
+      «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+      «k:USE»  «c:Opac»;
+      Pphi   : Real   := Conc.HI * cBoltzmann * Temp;
+      ABSCO  : Real   := «c:0.0»;
+      Wave   : Real   := cLight / Freq;
+      Theta  : Real   := «c:5040.4» / Temp;
+    «k:BEGIN»
+      ABSCO := ABSCO + Opac_Hydrogen       (Theta, Freq, Ecart);
+      ABSCO := ABSCO + Opac_H_minus        (Theta, Freq) * P_e;
+      ABSCO := ABSCO + Opac_Lyman          (Theta, Freq);
+      ABSCO := ABSCO + Opac_H2p            (Theta, Freq) * Conc.HII;
+      ABSCO := ABSCO + Opac_Quasi_Hydrogen (Theta, Freq) * Conc.HI;
+      ABSCO := ABSCO + Opac_Rayleigh_H            (Freq);
+      ABSCO := ABSCO + Opac_Rayleigh_H2           (Freq) * Conc.H2 / Conc.HI;
+      ABSCO := ABSCO + Chi_C  (Temp, Wave, Zeta(J_C ), Departure)  / Conc.HI;
+      ABSCO := ABSCO + Chi_Mg (Temp, Wave, Zeta(J_Mg), Departure)  / Conc.HI;
+      ABSCO := ABSCO + Chi_Al (Temp, Wave, Zeta(J_Al), Departure)  / Conc.HI;
+      ABSCO := ABSCO + Chi_Si (Temp, Wave, Zeta(J_Si), Departure)  / Conc.HI;
+      ABSCO := ABSCO + Chi_Fe (Temp, Wave ,Zeta(J_Fe), Departure)  / Conc.HI;
+      ABSCO := ABSCO + Thomson * P_e / Pphi;
+
+      «m:--  »«x:KAPPA per gram = OPV / RHO
+»      «m:--  »«x:KAPPA per atom = OPV * cBoltzmann * Temp / (P_g - P_e)
+»
+      «k:RETURN»  ABSCO * Conc.HI * «c:1».0E-«c:26»;
+    «k:END»  «f:Opacity»;
+
+    «m:--------------------------------------------------------»«x:
+»    «k:PROCEDURE»  «f:Electron_pressure» (Temp    : «k:IN»   «t:Real»;
+                                  Pr_gas  : «k:IN»   «t:Real»;
+                                  Pr_ele  : «k:OUT»  «t:Real»;
+                                  Kappa   : «k:OUT»  «t:Real»;
+                                  Rho     : «k:OUT»  «t:Real»  )  «k:IS»
+
+      «m:--  »«x:Determine electronic pressure corresponding to a given gas pressure
+»      «m:--  »«x:Then calculcate standard opacity (per gram at 5000 A).
+»
+      «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+      Kappa_5000, Density, P_g : Real;
+      Freq                     : Real    := cLight / «c:5000.0»;
+      M                        : Integer := «c:0»;
+
+      «m:----------------------------------»«x:
+»      «k:PROCEDURE»  «f:Press_Order»
+       (M       : «k:IN OUT»  «t:Integer»;
+        G_press : «k:IN»      «t:Real»;
+        E_press : «k:IN»      «t:Real»     )  «k:IS»
+
+        «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+        iflag : BOOLEAN;
+      «k:BEGIN»
+        iflag := TRUE;
+        «k:IF»  M = «c:0» «k:THEN»
+          iflag      := FALSE;
+          P_e_table(M+«c:1») := E_press;
+          P_g_table(M+«c:1») := G_press;
+          M              := M + «c:1»;
+        «k:ELSE»
+          «k:FOR»  I1  «k:IN»  «t:1..M»  «k:LOOP»
+            «k:IF»  (G_press < P_g_table(I1))  «k:THEN»
+              iflag := FALSE;
+              «k:FOR»  I2  «k:IN REVERSE»  «t:I1..M»  «k:LOOP»
+                P_e_table(I2+«c:1») := P_e_table(I2);
+                P_g_table(I2+«c:1») := P_g_table(I2);
+              «k:END» «k:LOOP»;
+              P_e_table(I1) := E_press;
+              P_g_table(I1) := G_press;
+              M             := M + «c:1»;
+              «k:EXIT»;
+            «k:END» «k:IF»;
+          «k:END» «k:LOOP»;
+        «k:END» «k:IF»;
+        «k:IF»  iflag  «k:THEN»
+          M            := M + «c:1»;
+          P_e_table(M) := E_press;
+          P_g_table(M) := G_press;
+        «k:END» «k:IF»;
+      «k:END»  «f:Press_Order»;
+
+    «k:BEGIN»
+      P_e := Pr_gas * «c:1».0E-«c:3»;
+      «k:FOR»  I  «k:IN»  «t:1..3»  «k:LOOP»
+        Equation_of_State (Temperature => Temp,
+                           Elec_press  => P_e,
+                           Gas_press   => P_g,
+                           Rho         => Density  );
+        Press_Order (M       => M,
+                     G_press => Log (P_g),
+                     E_press => Log (P_e)    );
+        P_e := «c:2.0» * P_e;
+      «k:END» «k:LOOP»;
+      «k:LOOP»
+        P_e :=  Exp (Ypol (X0 => Log (Pr_gas),
+                           X  => P_g_table,
+                           Y  => P_e_table,
+                           N  => M           ) );
+        Equation_of_State (Temperature => Temp,
+                           Elec_press  => P_e,
+                           Gas_press   => P_g,
+                           Rho         => Density);
+        Press_Order (M       => M,
+                     G_press => Log (P_g),
+                     E_press => Log (P_e));
+        «k:EXIT» «k:WHEN»  («k:ABS» ((P_g - Pr_gas) / Pr_gas) < «c:1».0E-«c:4»);
+      «k:END» «k:LOOP»;
+      Kappa_5000 := Opacity (Freq, Temp, P_e) / Density;
+      Kappa      := Kappa_5000;
+      Rho        := Density;
+      Pr_ele     := P_e;
+    «k:END»  «f:Electron_pressure»;
+
+  «k:BEGIN»
+
+    Text_IO.Skip_Line(U_2); Text_IO.Set_Col (U_2, «c:35»);
+    Text_IO.Get_Line (U_2, ITEM => Input_File_name,  LAST => In_Last);
+    Text_IO.Set_Col  (U_2, «c:35»);
+    Text_IO.Get_Line (U_2, ITEM => Output_File_name, LAST => Ou_Last);
+    Text_IO.Set_Col  (U_2, «c:35»);
+    Text_IO.Get      (U_2, Option);
+    Text_IO.Skip_Line(U_2); Text_IO.Set_Col (U_2, «c:35»);
+    Int_IO.Get       (U_2, Mat);
+    Text_IO.Skip_Line(U_2); Text_IO.Set_Col (U_2, «c:35»);
+    Real_IO.Get      (U_2, Rhox_min);
+    Text_IO.Skip_Line(U_2); Text_IO.Set_Col (U_2, «c:35»);
+    Real_IO.Get      (U_2, Rhox_max);
+
+    «m:-- »«x:interpolate Mat points in rho scale
+»
+    Rhox_min := Log10 (Rhox_min);
+    Rhox_max := Log10 (Rhox_max);
+    «k:FOR»  K  «k:IN»  «t:1..Mat»  «k:LOOP»
+      Rhox_new(K) := Rhox_min + Real (K-«c:1») * (Rhox_max - Rhox_min) / Real (Mat-«c:1»);
+    «k:END» «k:LOOP»;
+
+    «m:-- »«x:default : IAU abundances
+»
+    «k:IF»  ((Option = «s:'K'»)  «k:OR»  (Option = «s:'k'»))  «k:THEN»
+      «k:FOR»  J  «k:IN»  «t:1..No_elements»  «k:LOOP»
+        Abun(J) := Exp10 (Part.Atoms(J).Eps_k - «c:12.0»);
+      «k:END» «k:LOOP»;
+    «k:ELSE»
+      «k:FOR»  J  «k:IN»  «t:1..No_elements»  «k:LOOP»
+        Abun(J) := Exp10 (Part.Atoms(J).Eps_g - «c:12.0»);
+      «k:END» «k:LOOP»;
+    «k:END» «k:IF»;
+
+    Amu := Abun(«c:1») * Part.Atoms(«c:1»).Mass;
+    «k:FOR»  J  «k:IN»  «t:2..No_elements»  «k:LOOP»
+      Sab := Sab + Abun(J);
+      Amu := Amu + Abun(J) * Part.Atoms(J).Mass;
+      «k:IF»  (Part.Atoms(J).Isyb =  «c:6»)  «k:THEN»  J_C  := J;  «k:END» «k:IF»;
+      «k:IF»  (Part.Atoms(J).Isyb = «c:12»)  «k:THEN»  J_Mg := J;  «k:END» «k:IF»;
+      «k:IF»  (Part.Atoms(J).Isyb = «c:13»)  «k:THEN»  J_Al := J;  «k:END» «k:IF»;
+      «k:IF»  (Part.Atoms(J).Isyb = «c:14»)  «k:THEN»  J_Si := J;  «k:END» «k:IF»;
+      «k:IF»  (Part.Atoms(J).Isyb = «c:26»)  «k:THEN»  J_Fe := J;  «k:END» «k:IF»;
+    «k:END» «k:LOOP»;
+    Amu := Amu / Part.Atoms(«c:1»).Mass;
+
+    «m:-- »«x:read input model
+»
+    Model (Input_File_name(«c:1»..In_Last),
+           Output_File_name(«c:1»..Ou_Last) );
+
+    «m:-- »«x:determine electron pressure for given gas pressure
+»
+    «k:FOR»  K  «k:IN»  «t:1..M_dep»  «k:LOOP»
+      Electron_pressure (Temp   => Atmos(K).Temp,
+                         Pr_gas => Atmos(K).P_gas,
+                         Pr_ele => Result(K).P_elec,
+                         Kappa  => Result(K).Kappa,
+                         Rho    => Result(K).Rho    );
+      Int_IO.Put  (K);
+      Text_IO.Put («s:"    "»);
+      Real_IO.Put ((Atmos(K).P_elec-Result(K).P_elec)/Atmos(K).P_elec);
+      Text_IO.Put («s:"    "»);
+      Text_IO.New_Line;
+    «k:END» «k:LOOP»;
+
+    Int_IO.Put  (U_4, Mat, WIDTH => «c:4»);
+    Text_IO.New_Line (U_4);
+    Real_IO.Put (U_4, T_eff,  FORE => «c:8», AFT => «c:1», EXP => «c:0»);
+    Real_IO.Put (U_4, Log_g,  FORE => «c:8», AFT => «c:2», EXP => «c:0»);
+    Real_IO.Put (U_4, He,     FORE => «c:4», AFT => «c:2», EXP => «c:0»);
+    Text_IO.New_Line (U_4);
+
+    «k:FOR»  K  «k:IN»  «t:1..M_dep»  «k:LOOP»
+      Tab_Kappa(K) := Result(K).Kappa;
+      Tab_Theta(K) := Atmos(K).Temp;
+      Tab_Pelec(K) := Atmos(K).P_elec;
+      Tab_Pgas(K)  := Atmos(K).P_gas;
+      Tab_Rho(K)   := Result(K).Rho;
+      Tab_Rhox(K)  := Atmos(K).Rho_x;
+    «k:END» «k:LOOP»;
+    Text_IO.Put_Line(U_4, «s:"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"»);
+
+    «m:-- »«x:interpolate
+»
+    «k:FOR»  K  «k:IN»  «t:1..Idepth»  «k:LOOP»
+      Rhox_new(K) := Exp10 (Rhox_min + Real (K-«c:1») *  (Rhox_max - Rhox_min) /
+                     Real (Idepth-«c:1»));
+    «k:END» «k:LOOP»;
+    «k:FOR»  K  «k:IN»  «t:1..Idepth»  «k:LOOP»
+      Rho_new(K)   := Ypol (Rhox_new(K), Tab_Rhox, Tab_Rho,   M_dep);
+      Kappa_new(K) := Ypol (Rhox_new(K), Tab_Rhox, Tab_Kappa, M_dep);
+      Temp_new(K)  := Ypol (Rhox_new(K), Tab_Rhox, Tab_Theta, M_dep);
+      Pgas_new(K)  := Ypol (Rhox_new(K), Tab_Rhox, Tab_Pgas,  M_dep);
+      Pelec_new(K) := Ypol (Rhox_new(K), Tab_Rhox, Tab_Pelec, M_dep);
+    «k:END» «k:LOOP»;
+    Tau_new(«c:1») := «c:0.0»;
+    «k:FOR»  K  «k:IN»  «t:2..Idepth»  «k:LOOP»
+      Tau_new(K) := (Rhox_new(K)  - Rhox_new(K-«c:1»)) *
+                    (Kappa_new(K) + Kappa_new(K-«c:1»)) / «c:2.0»;
+    «k:END» «k:LOOP»;
+
+    «k:FOR»  K  «k:IN»  «t:2..Idepth» «k:LOOP»
+      Tau_new(K) := Tau_new(K) + Tau_new(K-«c:1»);
+    «k:END» «k:LOOP»;
+
+    «m:-- »«x:output interpolated model atmosphere with kappa_5000
+»
+    Rhox_min := Rhox_min + (Rhox_max - Rhox_min) / «c:500.0»;
+    «k:FOR»  K  «k:IN»  «t:1..Mat»  «k:LOOP»
+      Help    := Exp10 (Rhox_min + Real (K-«c:1») *  (Rhox_max - Rhox_min) /
+                          Real (Mat-«c:1»));
+      H_Tau   := Ypol (Help, Rhox_new, Tau_new,   Idepth);
+      H_Rho   := Ypol (Help, Rhox_new, Rho_new,   Idepth);
+      H_Kappa := Ypol (Help, Rhox_new, Kappa_new, Idepth);
+      H_Temp  := Ypol (Help, Rhox_new, Temp_new,  Idepth);
+      H_Pgas  := Ypol (Help, Rhox_new, Pgas_new,  Idepth);
+      H_Pelec := Ypol (Help, Rhox_new, Pelec_new, Idepth);
+      Alkl    := -Log10 ((H_Temp * H_Kappa * H_Rho) * cBoltzmann /
+                         (H_Pgas - H_Pelec));
+      Real_IO.Put (U_4, H_Tau,           FORE => «c:4», AFT => «c:3», EXP => «c:3»);
+      Real_IO.Put (U_4, «c:5040.4»/H_Temp,   FORE => «c:4», AFT => «c:4», EXP => «c:0»);
+      Real_IO.Put (U_4, Log10 (H_Pelec), FORE => «c:4», AFT => «c:3», EXP => «c:0»);
+      Real_IO.Put (U_4, Log10 (H_Pgas),  FORE => «c:4», AFT => «c:3», EXP => «c:0»);
+      Real_IO.Put (U_4, Alkl,            FORE => «c:4», AFT => «c:3», EXP => «c:0»);
+      Text_IO.New_Line (U_4);
+      Phys(K).Temp   := H_Temp;
+      Phys(K).P_gas  := H_Pgas;
+      Phys(K).P_elec := H_Pelec;
+    «k:END» «k:LOOP»;
+
+    «m:-- »«x:output relative error between input P_elec and calculated P_elec
+»
+    «k:FOR»  K  «k:IN»  «t:1..Mat»  «k:LOOP»
+      Electron_pressure (Temp   => Phys(K).Temp,
+                         Pr_gas => Phys(K).P_gas,
+                         Pr_ele => H_Pelec,
+                         Kappa  => Phys(K).Kappa,
+                         Rho    => Phys(K).Rho   );
+      Phys(K).Theta := «c:5040.4» / Phys(K).Temp;
+      Int_IO.Put (K);
+      Text_IO.Put («s:"    "»);
+      Real_IO.Put ((Phys(K).P_elec - H_Pelec) / Phys(K).P_elec);
+      Text_IO.Put («s:"    "»);
+      Text_IO.New_Line;
+    «k:END» «k:LOOP»;
+
+    «m:-- »«x:for all wavelengths, calculate and output continuous opacities
+»
+    Int_IO.Put (U_4, Iwave, WIDTH => «c:3»);
+    Text_IO.New_Line (U_4);
+    «k:FOR»  L  «k:IN»  «t:Lambda»'«k:RANGE»  «k:LOOP»
+      Freq := cLight / Lambda(L);
+      Real_IO.Put (U_4, Lambda(L),  FORE => «c:7», AFT => «c:1», EXP => «c:0»);
+      Text_IO.New_Line (U_4);
+      «k:FOR»  K  «k:IN»  «t:1..Mat»  «k:LOOP»
+        Equation_of_State (Temperature => Phys(K).Temp,
+                           Elec_press  => Phys(K).P_elec,
+                           Gas_press   => Help,
+                           Rho         => Density  );
+        Kap   := Opacity (Freq, Phys(K).Temp, Phys(K).P_elec);
+        Alkl  := -Log10 (Phys(K).Temp * Kap * cBoltzmann /
+                         (Phys(K).P_gas - Phys(K).P_elec));
+        Real_IO.Put (U_4, Alkl, FORE => «c:3», AFT => «c:3», EXP => «c:0»);
+        «k:IF»  (((K «k:MOD» «c:10») = «c:0»)  «k:OR»  (K = Mat))  «k:THEN»
+          Text_IO.New_Line (U_4);
+        «k:END» «k:IF»;
+      «k:END» «k:LOOP»;
+    «k:END» «k:LOOP»;
+
+  «k:END»  «f:Copcon_Main»;
+
+«k:BEGIN»
+   Text_IO.Open   (U_2, Text_IO.In_File,  «s:"cop_in.dat"»);
+
+   Text_IO.Skip_Line (U_2);
+   Text_IO.Skip_Line (U_2);
+   Text_IO.Skip_Line (U_2); Text_IO.Set_Col (U_2, «c:35»);
+   Int_IO.Get        (U_2, Ilayer_a);  «m:-- »«x:max. no. original depth points
+»                                       «m:-- »«x:from model atmosphere
+»                                       «m:-- »«x:actual number will be M_dep
+»   Copcon_Main (Ilayer_a);
+
+«k:END»  «f:Copcon»;
+«k:GENERIC»
+  «k:TYPE»  «t:Real»  «k:IS» «k:DIGITS» <>;
+«k:PACKAGE»  «f:Continuous_Opacity»  «k:IS»
+
+  «m:--    »«x:Continuous opacity package (specification part)
+»  «m:--»«x:
+»  «m:--    »«x:Written 1996 by Martin J. Stift
+»  «m:--                    »«x:Institut fuer Astronomie
+»  «m:--                    »«x:Tuerkenschanzstr. 17
+»  «m:--                    »«x:A-1180 Wien
+»  «m:--                    »«x:AUSTRIA
+»  «m:--»«x:
+»  «m:--                    »«x:e-mail:  stift@astro.univie.ac.at
+»  «m:--»«x:
+»  «m:--    »«x:This program is free software; you can redistribute it and/or modify
+»  «m:--    »«x:it under the terms of the GNU General Public License as published by
+»  «m:--    »«x:the Free Software Foundation; either version 2 of the License, or
+»  «m:--    »«x:(at your option) any later version.
+»  «m:--»«x:
+»  «m:--    »«x:This program is distributed in the hope that it will be useful,
+»  «m:--    »«x:but WITHOUT ANY WARRANTY; without even the implied warranty of
+»  «m:--    »«x:MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+»  «m:--    »«x:GNU General Public License for more details.
+»  «m:--»«x:
+»  «m:--    »«x:You should have received a copy of the GNU General Public License
+»  «m:--    »«x:along with this program; if not, write to the Free Software
+»  «m:--    »«x:Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+»
+  «k:TYPE»  «t:Const_Arr»  «k:IS» «k:PRIVATE»;
+  «k:TYPE»  «t:Level_Arr»  «k:IS» «k:ARRAY» («c:1..8»)   «k:OF»  «t:Real»;
+
+  «m:-------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Para» (X     : Const_Arr;
+                  Y     : Const_Arr;
+                  Arg_x : Real;
+                  N     : Integer  )  «k:RETURN»  Real;
+
+  «m:----------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Gaunt» (Frequency : Real;
+                   Level     : Integer)  «k:RETURN»  Real;
+
+  «m:---------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Opac_Hydrogen» (Theta     : Real;
+                           Frequency : Real;
+                           Ecart     : Real)  «k:RETURN»  Real;
+
+  «m:----------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Opac_H2p» (Theta     : Real;
+                      Frequency : Real)  «k:RETURN»  Real;
+
+  «m:--------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Opac_H_minus» (Theta     : Real;
+                          Frequency : Real)  «k:RETURN»  Real;
+
+  «m:------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Opac_Lyman» (Theta     : Real;
+                        Frequency : Real)  «k:RETURN»  Real;
+
+  «m:-----------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Opac_Rayleigh_H» (Frequency : Real)  «k:RETURN»  Real;
+
+  «m:------------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Opac_Rayleigh_H2» (Frequency : Real)  «k:RETURN»  Real;
+
+  «m:---------------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Opac_Quasi_Hydrogen» (Theta     : Real;
+                                 Frequency : Real)  «k:RETURN»  Real;
+
+  «m:---------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Chi_C» (Temp   : Real;
+                   Wave   : Real;
+                   Zeta_0 : Real;
+                   Bl     : Level_Arr)  «k:RETURN»  Real;
+
+  «m:----------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Chi_Mg» (Temp   : Real;
+                    Wave   : Real;
+                    Zeta_0 : Real;
+                    Bl     : Level_Arr)  «k:RETURN»  Real;
+
+  «m:----------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Chi_Al» (Temp   : Real;
+                    Wave   : Real;
+                    Zeta_0 : Real;
+                    Bl     : Level_Arr)  «k:RETURN»  Real;
+
+  «m:----------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Chi_Si» (Temp   : Real;
+                    Wave   : Real;
+                    Zeta_0 : Real;
+                    Bl     : Level_Arr)  «k:RETURN»  Real;
+
+  «m:----------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Chi_Fe» (Temp   : Real;
+                    Wave   : Real;
+                    Zeta_0 : Real;
+                    Bl     : Level_Arr)  «k:RETURN»  Real;
+
+«k:PRIVATE»
+  «k:TYPE»  «t:Const_Arr»  «k:IS» «k:ARRAY» («c:1..46»)  «k:OF»  «t:Real»;
+«k:END»  «f:Continuous_Opacity»;
+«k:WITH»  «c:Ada.Numerics.Generic_Elementary_Functions»;
+«k:PACKAGE BODY»  «f:Continuous_Opacity»  «k:IS»
+
+  «m:--    »«x:Continuous opacity package (body)
+»  «m:--»«x:
+»  «m:--    »«x:Written 1996 by Martin J. Stift
+»  «m:--                    »«x:Institut fuer Astronomie
+»  «m:--                    »«x:Tuerkenschanzstr. 17
+»  «m:--                    »«x:A-1180 Wien
+»  «m:--                    »«x:AUSTRIA
+»  «m:--»«x:
+»  «m:--                    »«x:e-mail:  stift@astro.univie.ac.at
+»  «m:--»«x:
+»  «m:--    »«x:This program is free software; you can redistribute it and/or modify
+»  «m:--    »«x:it under the terms of the GNU General Public License as published by
+»  «m:--    »«x:the Free Software Foundation; either version 2 of the License, or
+»  «m:--    »«x:(at your option) any later version.
+»  «m:--»«x:
+»  «m:--    »«x:This program is distributed in the hope that it will be useful,
+»  «m:--    »«x:but WITHOUT ANY WARRANTY; without even the implied warranty of
+»  «m:--    »«x:MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+»  «m:--    »«x:GNU General Public License for more details.
+»  «m:--»«x:
+»  «m:--    »«x:You should have received a copy of the GNU General Public License
+»  «m:--    »«x:along with this program; if not, write to the Free Software
+»  «m:--    »«x:Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+»
+  «k:PACKAGE»  «f:Math»  «k:IS» «k:NEW»  «f:Ada.Numerics.Generic_Elementary_Functions» (Real);
+  «k:USE»      «c:Math»;
+
+  cLight    : «k:CONSTANT»  «t:Real»  := «c:2».9979E18;
+  C2        : «k:CONSTANT»  «t:Real»  := «c:1».43883E8;
+  Ecart     : Real            := «c:1.0»;
+  Departure : Level_Arr       := («k:OTHERS» => «c:1.0»);
+
+  «m:------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Para» (X     : Const_Arr;
+                  Y     : Const_Arr;
+                  Arg_x : Real;
+                  N     : Integer    )  «k:RETURN»  Real  «k:IS»
+
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    «m:--  »«x:Parabolic interpolation - Gingerich
+»    «m:--  »«x:Gives para, the interpolated value in the X array for argument Arg_x.
+»    «m:--  »«x:For 0.0 Jx, the A, B, C constants will be unchanged.
+»
+    A, B, C       : Real;
+    X12, X23, X31 : Real;
+    Y12           : Real;
+  «k:BEGIN»
+    X12 := X(N-«c:1») - X(N);
+    X23 := X(N)   - X(N+«c:1»);
+    X31 := X(N+«c:1») - X(N-«c:1»);
+    Y12 := Y(N-«c:1») - Y(N);
+    C   := (X12 * (Y(N) - Y(N+«c:1»)) - X23 * Y12) / (X12 * X23 * X31);
+    B   := Y12 / X12 - C * (X(N-«c:1») + X(N));
+    A   := Y(N-«c:1») - (B + C * X(N-«c:1»)) * X(N-«c:1»);
+    «k:RETURN»  A + (B + C * Arg_x) * Arg_x;
+  «k:END»  «f:Para»;
+
+  «m:-------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Gaunt» (Frequency : Real;
+                   Level     : Integer)  «k:RETURN»  Real  «k:IS»
+
+    «m:--  »«x:Gaunt factors for b-f hydrogen, Gingerich, March 1964
+»
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    W : Real  := cLight * «c:1».0E-«c:3» / Frequency;
+  «k:BEGIN»
+    «k:CASE»  Level  «k:IS»
+      «k:WHEN»  «c:1»  =>
+        «k:RETURN»  «c:0.9916» + ( «c:9».068E-«c:3» - «c:0.2524»   * W) * W;
+      «k:WHEN»  «c:2»  =>
+        «k:RETURN»  «c:1.105»  + («c:-7».922E-«c:2» + «c:4».536E-«c:3» * W) * W;
+      «k:WHEN»  «c:3»  =>
+        «k:RETURN»  «c:1.101»  + («c:-3».290E-«c:2» + «c:1».152E-«c:3» * W) * W;
+      «k:WHEN»  «c:4»  =>
+        «k:RETURN»  «c:1.101»  + («c:-1».923E-«c:2» + «c:5».110E-«c:4» * W) * W;
+      «k:WHEN»  «c:5»  =>
+        «k:RETURN»  «c:1.102»  + («c:-0.01304»  + «c:2».638E-«c:4» * W) * W;
+      «k:WHEN»  «c:6»  =>
+        «k:RETURN»  «c:1.0986» + («c:-0.00902»  + «c:1».367E-«c:4» * W) * W;
+      «k:WHEN»  «k:OTHERS» =>
+        «k:RETURN»  «c:1.0»;
+    «k:END» «k:CASE»;
+  «k:END»  «f:Gaunt»;
+
+  «m:------------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Opac_Hydrogen» (Theta     : Real;
+                           Frequency : Real;
+                           Ecart     : Real)  «k:RETURN»  Real  «k:IS»
+
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    «m:--  »«x:Hydrogen opacity per neutral atom, scaled by E26.
+»    «m:--  »«x:Based on Menzel and Pekeris, MNRAS 96, 77, 1935.
+»    «m:--  »«x:Gingerich - 21 July 1960 - 21 March 1967.
+»
+    T       : Real   := «c:5040.4» / Theta;
+    U       : Real   := «c:157779.0» / T;
+    Ehvkt   : Real   := Exp («c:-4».79895E-«c:11» / T * Frequency);
+    D       : Real   := «c:0.0»;
+    W       : Real   := cLight / Frequency;
+    Square  : Real;
+    B, G3   : Real;
+    N       : Integer  := «c:0»;
+    N_prime : Integer;
+  «k:BEGIN»
+    «k:IF»  (Frequency < «c:0».5137538E14)  «k:THEN»
+      N := «c:9»;
+
+    «m:--  »«x:determine lowest atomic level N considered
+»    «k:ELSE»
+      «k:LOOP»
+        N := N + «c:1»;
+        «k:EXIT» «k:WHEN» (Real (N*N) >= («c:3».2880242E15 / Frequency));
+      «k:END» «k:LOOP»;
+      N_prime := Integer'Min («c:8»,N+«c:2»);
+    «k:END» «k:IF»;
+
+    «m:--  »«x:Strom's fit to Karsas and Latter f-f Gaunt factors
+»
+    «k:IF»  (Frequency < «c:5».5E14)  «k:THEN»
+      G3 := «c:1.0828» + «c:3».865E-«c:6» * T + («c:7».564E-«c:7» + («c:4».920E-«c:10» - «c:2».482E-«c:15» * T)
+              * T + («c:5».326E-«c:12» + («c:-3».904E-«c:15» + «c:1».8790E-«c:20» * T) * T) * W) * W;
+
+    «m:-- »«x:wavelength below 5450A
+»    «k:ELSE»
+      G3 := «c:1.0»;
+    «k:END» «k:IF»;
+
+    «m:--  »«x:Kalkofen's integral for long wavelengths
+»    «k:IF»  (N_prime < N)  «k:THEN»
+      D := («c:1.0» / Ehvkt - «c:1.0» + G3) / «c:2.0» / U;
+
+    «m:--  »«x:summation of contributions from N_prime to N relevant levels
+»    «m:--  »«x:plus asymptotic relation for levels N_prime+1 and higher
+»    «m:--  »«x:numerical constants from Allen, "Astrophysical Quantities", p. 89
+»    «k:ELSE»
+      «k:FOR»  K  «k:IN»  «t:N..N_prime»  «k:LOOP»
+        Square := Real (K*K);
+        «k:IF»  (K = «c:1»)  «k:THEN»
+          B := Ecart;
+        «k:ELSE»
+          B := «c:1.0»;
+        «k:END» «k:IF»;
+        D := B * Gaunt (Frequency, K) / Square * Exp (U / Square) / Real (K) + D;
+      «k:END» «k:LOOP»;
+      D := D + (Exp (U / Real ((N_prime+«c:1»)**«c:2»)) - «c:1.0» + G3) / «c:2.0» / U;
+    «k:END» «k:IF»;
+    «k:RETURN»  («c:1».0E26 / Frequency) * ( D / Exp (U)) * ((«c:1.0» - Ehvkt) /
+             Frequency * «c:2».815E29 / Frequency) / Ecart;
+  «k:END»  «f:Opac_Hydrogen»;
+
+  «m:-------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Opac_H2p» (Theta     : Real;
+                      Frequency : Real)  «k:RETURN»  Real  «k:IS»
+
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    «m:--  »«x:H2+ opacity per neutral hydrogen atom and per H+, scaled by E26.
+»    «m:--  »«x:Based on Bates, J.CHEM.PHYS. 19, 1122, 1951 -- MNRAS 112, 40, 1952
+»    «m:--  »«x:Phil. Trans. R. London A 246, 215, 1953.
+»    «m:--  »«x:see Gingerich, SAO SPECIAL REPORT 167, 21, 1964.
+»    «m:--  »«x:12 February 1962 - 29 January 1964.
+»
+    N               : Integer  := «c:1»;
+    Ev              : Real     := «c:3».03979E-«c:16» * Frequency;
+    a0, a1, a2, a3  : Real;
+
+    Elim : Const_Arr :=
+       («c:1».0E36,   «c:2.716»,    «c:2.437»,   «c:2.156»,   «c:1.898»,    «c:1.660»,    «c:1.445»,
+        «c:1.254»,    «c:1.086»,    «c:0.9354»,  «c:0.8109»,  «c:0.7004»,   «c:0.6051»,   «c:0.5229»,
+        «c:0.4518»,   «c:0.3904»,   «c:0.3374»,  «c:0.2915»,  «c:0.2517»,   «c:0.2171»,   «c:0.1871»,
+        «c:0.1611»,   «c:0.1386»,   «c:0.1190»,  «c:0.1021»,  «c:0.08758»,  «c:0.07498»,  «c:0.06390»,
+        «c:0.05434»,  «c:0.04629»,  «c:0.03950», «c:0.03357», «c:0.02840»,  «c:0.02397»,  «c:0.02029»,
+        «c:0.01722»,  «c:0.01456»,  «c:0.01225», «c:0.01028», «c:0.008657», «c:0.007312», «c:0.006153»,
+        «c:0.005149», «c:0.004300», «c:0.0»    , «c:0.0»      );
+
+    E : Const_Arr :=
+       («c:3.0»,     «c:2.852»,   «c:2.58»,    «c:2.294»,   «c:2.023»,   «c:1.774»,   «c:1.547»,
+        «c:1.344»,   «c:1.165»,   «c:1.007»,   «c:0.8702»,  «c:0.7516»,  «c:0.6493»,  «c:0.5610»,
+        «c:0.4848»,  «c:0.4189»,  «c:0.3620»,  «c:0.3128»,  «c:0.2702»,  «c:0.2332»,  «c:0.2011»,
+        «c:0.1732»,  «c:0.1491»,  «c:0.1281»,  «c:0.1100»,  «c:0.09426», «c:0.0809»,  «c:0.06906»,
+        «c:0.05874», «c:0.04994», «c:0.04265», «c:0.03635», «c:0.0308»,  «c:0.026»,   «c:0.02195»,
+        «c:0.01864», «c:0.01581», «c:0.01332», «c:0.01118», «c:0.00938», «c:0.00793», «c:0.00669»,
+        «c:0.00561», «c:0.00469», «c:0.00392», «c:0.0033»  );
+
+    Up : Const_Arr :=
+       («c:85.0»,        «c:9.99465»,     «c:4.97842»,     «c:3.28472»,     «c:2.41452»,
+        «c:1.87038»,     «c:1.48945»,     «c:1.20442»,     «c:0.98279»,     «c:0.80665»,
+        «c:0.66493»,     «c:0.54997»,     «c:0.45618»,     «c:0.37932»,     «c:0.31606»,
+        «c:0.26382»,     «c:0.22057»,     «c:0.18446»,     «c:0.15473»,     «c:0.12977»,
+        «c:1».08890E-«c:01», «c:9».14000E-«c:02», «c:7».67600E-«c:02», «c:6».44500E-«c:02», «c:5».41200E-«c:02»,
+        «c:4».54000E-«c:02», «c:3».81000E-«c:02», «c:3».19500E-«c:02», «c:2».67600E-«c:02», «c:2».23700E-«c:02»,
+        «c:1».86900E-«c:02», «c:1».56100E-«c:02», «c:1».30200E-«c:02», «c:1».08300E-«c:02», «c:8».99000E-«c:03»,
+        «c:7».45000E-«c:03», «c:6».15000E-«c:03», «c:5».08000E-«c:03», «c:4».16000E-«c:03», «c:3».42000E-«c:03»,
+        «c:2».77000E-«c:03», «c:2».21000E-«c:03», «c:1».78000E-«c:03», «c:1».45000E-«c:03», «c:1».24000E-«c:03»,
+        «c:1».14000E-«c:03»  );
+
+    Us : Const_Arr :=
+       («c:-85.0»,       «c:-7.1426»,     «c:-2.3984»,     «c:-0.99032»,    «c:-0.39105»,
+        «c:-0.09644»,     «c:0.05794»,     «c:0.13996»,     «c:0.18186»,     «c:0.20052»,
+         «c:0.20525»,     «c:0.20167»,     «c:0.19309»,     «c:0.18167»,     «c:0.16871»,
+         «c:0.15511»,     «c:0.14147»,     «c:0.12815»,     «c:0.11542»,     «c:0.10340»,
+         «c:0.09216»,     «c:8».18000E-«c:02», «c:7».22900E-«c:02», «c:6».36700E-«c:02», «c:5».58400E-«c:02»,
+         «c:4».88400E-«c:02», «c:4».25700E-«c:02», «c:3».69900E-«c:02», «c:3».20700E-«c:02», «c:2».77500E-«c:02»,
+         «c:2».39400E-«c:02», «c:2».06100E-«c:02», «c:1».77200E-«c:02», «c:1».52200E-«c:02», «c:1».30500E-«c:02»,
+         «c:1».11900E-«c:02», «c:9».58000E-«c:03», «c:8».21000E-«c:03», «c:7».01000E-«c:03», «c:6».00000E-«c:03»,
+         «c:5».11000E-«c:03», «c:4».35000E-«c:03», «c:3».72000E-«c:03», «c:3».22000E-«c:03», «c:2».86000E-«c:03»,
+         «c:2».63000E-«c:03»   );
+
+    Fr : Const_Arr :=
+       («c:0.0»,         «c:4».30272E-«c:18», «c:1».51111E-«c:17», «c:4».02893E-«c:17», «c:8».89643E-«c:17»,
+        «c:1».70250E-«c:16», «c:2».94529E-«c:16», «c:4».77443E-«c:16», «c:7».25449E-«c:16», «c:1».06238E-«c:15»,
+        «c:1».50501E-«c:15», «c:2».08046E-«c:15», «c:2».82259E-«c:15», «c:3».76256E-«c:15», «c:4».93692E-«c:15»,
+        «c:6».38227E-«c:15», «c:8».17038E-«c:15», «c:1».02794E-«c:14», «c:1».28018E-«c:14», «c:1».57371E-«c:14»,
+        «c:1».91217E-«c:14», «c:2».30875E-«c:14», «c:2».75329E-«c:14», «c:3».27526E-«c:14», «c:3».85481E-«c:14»,
+        «c:4».52968E-«c:14», «c:5».18592E-«c:14», «c:5».99825E-«c:14», «c:6».92092E-«c:14», «c:7».94023E-«c:14»,
+        «c:9».01000E-«c:14», «c:1».01710E-«c:13», «c:1».14868E-«c:13», «c:1».29969E-«c:13», «c:1».46437E-«c:13»,
+        «c:1».63042E-«c:13», «c:1».81440E-«c:13», «c:2».02169E-«c:13», «c:2».25126E-«c:13», «c:2».49637E-«c:13»,
+        «c:2».73970E-«c:13», «c:3».00895E-«c:13», «c:3».30827E-«c:13», «c:3».64140E-«c:13», «c:3».99503E-«c:13»,
+        «c:4».34206E-«c:13»  );
+
+  «k:BEGIN»
+    «k:LOOP»
+      «k:EXIT» «k:WHEN» (Ev >= Elim(N));
+      N := N + «c:1»;
+    «k:END» «k:LOOP»;
+    a0 := «c:0.0319273» / Theta;
+    a1 := Para (X => E, Y => Fr, Arg_x => Ev, N => N);
+    a2 := Para (X => E, Y => Us, Arg_x => Ev, N => N);
+    a3 := Para (X => E, Y => Up, Arg_x => Ev, N => N);
+    «k:RETURN»  «k:ABS» (a1 * (Exp (a2 / a0) - Exp (-a3 / a0)));
+  «k:END»  «f:Opac_H2p»;
+
+  «m:-----------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Opac_H_minus» (Theta     : Real;
+                          Frequency : Real)  «k:RETURN»  Real  «k:IS»
+
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    «m:--  »«x:H- opacity per neutral hydrogen atom and unit electron presssure,
+»    «m:--  »«x:scaled by E26. All opacity routines include stimulated emission.
+»    «m:--  »«x:f-f based on John, MNRAS 128,93,1964.
+»    «m:--  »«x:b-f based on Geltman, ApJ 136,935,1962.
+»    «m:--  »«x:see Gingerich, SAO SPECIAL REPORT 167, 19-20, 1964.
+»
+    W  : Real  := cLight * «c:1».0E-«c:3» / Frequency;
+    X  : Real  := «c:16.419» - W;
+    H  : Real  := «c:9».5210E-«c:15» * Frequency;
+    L  : Real;
+  «k:BEGIN»
+
+    «m:--  »«x:f-f only
+»    «k:IF»  (X < «c:0.0»)  «k:THEN»
+      «k:RETURN»  «c:0.0053666» + («c:-0.011493» + «c:0.027039» * Theta) * Theta +
+              («c:-3.2062» + («c:11.924» - «c:5.939» * Theta) * Theta +
+              («c:-0.40192» + («c:7.0355» - «c:0.34592» * Theta) * Theta) * W) * W / «c:1000.0»;
+
+    «m:--  »«x:b-f plus f-f
+»    «k:ELSE»
+      «k:IF»  (W > «c:14.2»)  «k:THEN»
+        L := («c:0.269818» + («c:0.220190» + («c:-0.0411288» + «c:0.00273236» * X) *
+              X) * X) * X;
+      «k:ELSE»
+        L := «c:0.00680133» + («c:0.178708» + («c:0.16479» + («c:-0.0204842» + «c:5».95244E-«c:4» *
+              W) * W) * W) * W;
+      «k:END» «k:IF»;
+      «k:RETURN»  «c:0.0053666» + («c:-0.011493» + «c:0.027039» * Theta) * Theta +
+           («c:-3.2062» + («c:11.924» - «c:5.939» * Theta) * Theta +
+           («c:-0.40192» + («c:7.0355» - «c:0.34592» * Theta) * Theta) * W) * W / «c:1000.0» +
+            L * «c:0.4158» * Theta**«c:2» * Sqrt (Theta) *
+            Exp («c:1.737» * Theta) * («c:1.0» - Exp (-Theta * H));
+    «k:END» «k:IF»;
+  «k:END»  «f:Opac_H_minus»;
+
+  «m:---------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Opac_Lyman» (Theta     : Real;
+                        Frequency : Real)  «k:RETURN»  Real  «k:IS»
+
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    «m:--  »«x:Opacity per neutral hydrogen atom for resonance broadening of
+»    «m:--  »«x:Lyman alpha line, based on calculations of Kenneth Sando, July 69.
+»
+    W : Real  := cLight / Frequency;
+  «k:BEGIN»
+    «k:IF»  ((W > «c:1950.0»)  «k:OR»  (W < «c:1630.0»))  «k:THEN»
+      «k:RETURN»  «c:0.0»;
+    «k:ELSE»
+
+    «m:--  »«x:Q.M. treatment for 1950A - 1630A .
+»      «k:RETURN»  «c:4».03E-«c:12» / Sqrt («c:5040.4» / Theta) *
+                         Exp ((«c:0.0471» + Theta * «c:35.0» / «c:5040.4») * («c:1620.0» - W));
+    «k:END» «k:IF»;
+  «k:END»  «f:Opac_Lyman»;
+
+  «m:--------------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Opac_Rayleigh_H» (Frequency : Real)  «k:RETURN»  Real  «k:IS»
+
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    «m:--  »«x:Rayleigh scattering per neutral hydrogen atom, scaled by E26.
+»    «m:--  »«x:Dalgarno (see Gingerich, SAO SPECIAL REPORT 167, 20, 1964)
+»
+    W : Real  := (cLight / Real'Min (Frequency, «c:29».22E14))**«c:2»;
+  «k:BEGIN»
+    «k:RETURN»  («c:5».799E13 * (W**«c:2») + «c:1».422E20 * W + «c:2».78E26) / W**«c:4»;
+  «k:END»  «f:Opac_Rayleigh_H»;
+
+  «m:---------------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Opac_Rayleigh_H2» (Frequency : Real)  «k:RETURN»  Real  «k:IS»
+
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    «m:--  »«x:Rayleigh scattering per H2 molecule, scaled by E26 .
+»    «m:--  »«x:Dalgarno & Williams (1962) - ApJ 136, p. 690 .
+»
+    W :  Real := (Frequency / cLight)**«c:2»;
+  «k:BEGIN»
+    «k:RETURN»  ((«c:1».61E26 * W + «c:1».28E20) * W + «c:8».14E13) * W**«c:2»;
+  «k:END»  «f:Opac_Rayleigh_H2»;
+
+  «m:------------------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Opac_Quasi_Hydrogen» (Theta     : Real;
+                                 Frequency : Real)  «k:RETURN»  Real  «k:IS»
+
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    «m:--   »«x:Quasi_Hydrogen approximates the Quasi_Hydrogen molecular absorption.
+»    «m:--   »«x:Coefficients given in the Doyle thesis, Harvard 1964.
+»    «m:--   »«x:4 April 1968 version must be multiplied by H/cLight.
+»    «m:--   »«x:To obtain opacity per neutral H Atom, multiply Quasi-Hydrogen by N(HI),
+»    «m:--   »«x:number of HI atoms per cc..
+»    «m:--   »«x:When multiplied by N(HI)**2, Quasi-Hydrogen gives opacity per unit volume.
+»
+    T          : Real                            := «c:5.0404» / Theta;
+    Freq_limit : «k:CONSTANT» «t:ARRAY» («c:1..5»)  «k:OF» «t:Real» :=
+           («c:18».224E14, «c:15».989E14, «c:14».276E14, «c:12».757E14, «c:10».901E14);
+
+    «m:--   »«x:for     1645A     1875A      2100A      2350A      2750A
+»
+  «k:BEGIN»
+    «k:IF»  (Frequency < Freq_limit(«c:5»))  «k:THEN»
+      «k:RETURN»  «c:0.0»;
+    «k:ELSIF»  (Frequency >= Freq_limit(«c:1»))  «k:THEN»                         «m:---  »«x:1540A
+»      «k:RETURN»  («c:-1».5527E3 + («c:2».0309E3 - «c:1».2391E2 * T) * T) * «c:1».0E-«c:19»;
+    «k:ELSIF»  (Frequency >= Freq_limit(«c:2»))  «k:THEN»                         «m:---  »«x:1750A
+»      «k:RETURN»  («c:-2».2983E3 + («c:1».1117E3 - «c:40.873» * T) * T) * «c:1».0E-«c:19»;
+    «k:ELSIF»  (Frequency >= Freq_limit(«c:3»))  «k:THEN»                         «m:---  »«x:2000A
+»      «k:RETURN»  («c:-462.84» + («c:140.64» + «c:11.809» * T) * T) * «c:1».0E-«c:19»;
+    «k:ELSIF»  (Frequency >= Freq_limit(«c:4»))  «k:THEN»                         «m:---  »«x:2200A
+»      «k:RETURN»  («c:-24.813» + («c:-32.670» + «c:14.373» * T) * T) * «c:1».0E-«c:19»;
+    «k:ELSE»                                                              «m:---  »«x:2500A
+»      «k:RETURN»  («c:79.057» + («c:-57.532» + «c:10.191» * T) * T) * «c:1».0E-«c:19»;
+    «k:END» «k:IF»;
+  «k:END»  «f:Opac_Quasi_Hydrogen»;
+
+  «m:------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Chi_C» (Temp   : Real;
+                   Wave   : Real;
+                   Zeta_0 : Real;
+                   Bl     : Level_Arr)  «k:RETURN»  Real  «k:IS»
+
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    «m:--  »«x:Opacity per unit volume (cm-1) due to the photoionisation of
+»    «m:--  »«x:neutral carbon (C I) at the wavelength W (in Angstroems).
+»    «m:--  »«x:Zeta_0 = N0 / U0 = number of C I atoms per cm3 divided by the
+»    «m:--  »«x:partition function of C I .
+»    «m:--  »«x:Bl(L) = Departure coefficients from LTE of the population of level L .
+»    «m:--  »«x:One takes into account 8 levels of C I .
+»    «m:--  »«x:Numerical data -- see Vernazza et al., ApJS, 30, p. 6, Table 5 (1976) .
+»
+    W_lim : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+        ( «c:1100.0», «c:1239.0», «c:1444.0», «c:1745.0», «c:3257.0», «c:3437.0», «c:3733.0», «c:4907.0» );
+    Al : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:40.4», «c:28.7», «c:33.6», «c:1.0»,  «c:0.2», «c:1.54»,  «c:16.0»,  «c:2.1» );
+    Sl : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:2.0», «c:1.5», «c:1.5», «c:3.0», «c:1.2», «c:1.2», «c:3.0», «c:1.5» );
+    Gl : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:9.0», «c:5.0», «c:1.0», «c:5.0», «c:9.0», «c:3.0», «c:15.0», «c:27.0» );
+    Alp : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:28.2», «c:18.4», «c:24.0», «c:0.0», «c:0.0», «c:0.0», «c:0.0», «c:0.0» );
+    Slp : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:3.2», «c:2.5», «c:2.5», «c:0.0», «c:0.0», «c:0.0», «c:0.0», «c:0.0» );
+    Dw : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:0.0»,         «c:1».019884E-«c:4», «c:2».165701E-«c:4», «c:3».360250E-«c:4»,
+           «c:6».020599E-«c:4», «c:6».181395E-«c:4», «c:6».412098E-«c:4», «c:7».053004E-«c:4» );
+
+    LM   : «k:CONSTANT» «t:Integer» := «c:8»;
+    Opac : Real             := «c:0.0»;
+    Sig  : Real;
+  «k:BEGIN»
+    «k:FOR»  L  «k:IN»  «t:1..LM»  «k:LOOP»
+      «k:IF»  (Wave <= W_lim(L))  «k:THEN»
+        Sig := Al(L) * (Wave / W_lim(L))**Sl(L);
+        «k:IF»  (L <= «c:3»)  «k:THEN»
+          Sig := Sig - Alp(L) * (Wave / W_lim(L))**Slp(L);
+        «k:END» «k:IF»;
+        Opac := Opac + Sig * («c:1.0» - Exp (-C2 / (Wave * Temp)) / Bl(L)) *
+                       (Zeta_0 * Gl(L) * Exp (-C2 * Dw(L) / Temp) * Bl(L));
+      «k:END» «k:IF»;
+    «k:END» «k:LOOP»;
+    «k:RETURN»  Opac * «c:1».0E8;
+  «k:END»  «f:Chi_C»;
+
+  «m:-------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Chi_Mg» (Temp   : Real;
+                    Wave   : Real;
+                    Zeta_0 : Real;
+                    Bl     : Level_Arr)  «k:RETURN»  Real  «k:IS»
+
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    «m:--  »«x:Opacity per unit volume (cm-1) due to the photoionisation of
+»    «m:--  »«x:neutral magnesium (Mg I) at the wavelength W (in Angstroems).
+»    «m:--  »«x:Zeta_0 = N0 / U0 = number of Mg I atoms per cm3 divided by the
+»    «m:--  »«x:partition function of C I .
+»    «m:--  »«x:Bl(L) = Departure coefficients from LTE of the population of level L .
+»    «m:--  »«x:One takes into account 8 levels of Mg I .
+»    «m:--  »«x:Numerical data -- see Vernazza et al., ApJS, 30, p. 6, Table 6 (1976) .
+»
+    W_lim : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+        ( «c:1621.0», «c:2513.0», «c:3756.0», «c:4884.0», «c:5504.0», «c:6549.0», «c:7236.0», «c:7292.0» );
+    Al : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:1.1», «c:20.0», «c:16.0», «c:2.1», «c:0.43», «c:45.0», «c:25.0», «c:33.8» );
+    Sl : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:10.0», «c:2.7», «c:2.1», «c:2.6», «c:2.6», «c:2.7», «c:2.7», «c:2.8» );
+    Gl : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:1.0», «c:9.0», «c:3.0», «c:3.0», «c:1.0», «c:5.0», «c:9.0», «c:15.0» );
+    Dw : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         («c:0.0»,         «c:2».189724E-«c:4», «c:3».506625E-«c:4», «c:4».121529E-«c:4»,
+          «c:4».352171E-«c:4», «c:4».642081E-«c:4», «c:4».787052E-«c:4», «c:4».797666E-«c:4» );
+
+    «m:--   »«x:DW(L) = (1./WLIM(1)) - (1./WLIM(L))
+»
+    LM   : «k:CONSTANT» «t:Integer» := «c:8»;
+    Sig3 : Real             := «c:7.8» * (Wave / W_lim(«c:3»))**«c:9.5»;
+    Opac : Real             := «c:0.0»;
+    Sig  : Real;
+  «k:BEGIN»
+    «k:FOR»  L  «k:IN»  «t:1..LM»  «k:LOOP»
+      «k:IF»  (Wave <= W_lim(L))  «k:THEN»
+        Sig := Al(L) * (Wave / W_lim(L))**Sl(L);
+        «k:IF»  (L = «c:3»)  «k:THEN»
+          Sig := Sig - Sig3;
+        «k:END» «k:IF»;
+        Opac := Opac + Sig * («c:1.0» - Exp (-C2 / (Wave * Temp)) / Bl(L)) *
+                      (Zeta_0 * Gl(L) * Exp (-C2 * Dw(L) / Temp) * Bl(L));
+      «k:END» «k:IF»;
+    «k:END» «k:LOOP»;
+    «k:RETURN»  Opac * «c:1».0E8;
+  «k:END»  «f:Chi_Mg»;
+
+  «m:-------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Chi_Al» (Temp   : Real;
+                    Wave   : Real;
+                    Zeta_0 : Real;
+                    Bl     : Level_Arr)  «k:RETURN»  Real  «k:IS»
+
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    «m:--  »«x:Opacity per unit volume (cm-1) due to the photoionisation of
+»    «m:--  »«x:neutral aluminum (Al I) at the wavelength W (in Angstroems).
+»    «m:--  »«x:Zeta_0 = N0 / U0 = number of C I atoms per cm3 divided by the
+»    «m:--  »«x:partition function of C I .
+»    «m:--  »«x:Bl(L) = Departure coefficients from LTE of the population of level L .
+»    «m:--  »«x:One takes into account 8 levels of Al I .
+»    «m:--  »«x:Numerical data -- see Vernazza et al., ApJS, 30, p. 6, Table 7 (1976) .
+»
+    W_lim : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         («c:2076.0», «c:4360.0», «c:5205.0», «c:6311.0», «c:6525.0», «c:9442.0», «c:10698.0», «c:12495.0» );
+    Al : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:65.0», «c:10.0», «c:10.0», «c:47.0», «c:14.5», «c:56.7», «c:50.0», «c:50.0» );
+    Sl : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:4.4», «c:2.0», «c:2.0», «c:1.83», «c:1.0», «c:1.9», «c:3.0», «c:3.0» );
+    Gl : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:6.0», «c:2.0», «c:6.0», «c:10.0», «c:6.0», «c:2.0», «c:10.0», «c:6.0» );
+    Dw : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         («c:0.0»,         «c:2».523378E-«c:4», «c:2».895726E-«c:4», «c:3».232421E-«c:4»,
+          «c:3».284389E-«c:4», «c:3».757858E-«c:4», «c:3».882202E-«c:4», «c:4».016636E-«c:4» );
+
+    LM   : «k:CONSTANT» «t:Integer» := «c:8»;
+    Opac : Real             := «c:0.0»;
+    Sig  : Real;
+  «k:BEGIN»
+    «k:FOR»  L  «k:IN»  «t:1..LM»  «k:LOOP»
+      «k:IF»  (Wave <= W_lim(L))  «k:THEN»
+        Sig  := Al(L) * (Wave / W_lim(L))**Sl(L);
+        Opac := Opac + Sig * («c:1.0» - Exp (-C2 / (Wave * Temp)) / Bl(L)) *
+                      (Zeta_0 * Gl(L) * Exp (-C2 * Dw(L) / Temp) * Bl(L));
+      «k:END» «k:IF»;
+    «k:END» «k:LOOP»;
+    «k:RETURN»  Opac * «c:1».0E8;
+  «k:END»  «f:Chi_al»;
+
+  «m:-------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Chi_Si» (Temp   : Real;
+                    Wave   : Real;
+                    Zeta_0 : Real;
+                    Bl     : Level_Arr)  «k:RETURN»  Real  «k:IS»
+
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    «m:--  »«x:Opacity per unit volume (cm-1) due to the photoionisation of
+»    «m:--  »«x:neutral silicon (Si I) at the wavelength W (in Angstroems).
+»    «m:--  »«x:Zeta_0 = N0 / U0 = number of C I atoms per cm3 divided by the
+»    «m:--  »«x:partition function of C I .
+»    «m:--  »«x:Bl(L) = Departure coefficients from LTE of the population of level L .
+»    «m:--  »«x:One takes into account 8 levels of Si I .
+»    «m:--  »«x:Numerical data -- see Vernazza et al., ApJS, 30, p. 4, Table 1 (1976) .
+»
+    W_lim : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:1525.0», «c:1682.0», «c:1986.0», «c:3085.0», «c:3864.0», «c:4040.0», «c:4892.0», «c:5840.0» );
+    Al : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:37.0», «c:35.0», «c:46.0», «c:15.0», «c:1.25», «c:4.09», «c:18.0», «c:14.1» );
+    Sl : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:5.0», «c:3.0», «c:0.5», «c:3.0», «c:2.0», «c:2.0», «c:3.0», «c:3.0» );
+    Gl : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         ( «c:9.0», «c:5.0», «c:1.0», «c:5.0», «c:9.0», «c:3.0», «c:15.0», «c:27.0» );
+    Dw : «k:CONSTANT» «t:ARRAY» («c:1..8»)  «k:OF» «t:Real» :=
+         («c:0.0»,         «c:6».120738E-«c:5», «c:1».522130E-«c:4», «c:3».315886E-«c:4»,
+          «c:3».969385E-«c:4», «c:4».082130E-«c:4», «c:4».513223E-«c:4», «c:4».845048E-«c:4» );
+
+    «m:--  »«x:DW(L) = (1./WLIM(1)) - (1./WLIM(L))
+»
+    LM   : «k:CONSTANT» «t:Integer»  := «c:8»;
+    Opac : Real              := «c:0.0»;
+    Sig1 : Real              := Al(«c:1»);
+    Sig  : Real;
+  «k:BEGIN»
+    «k:IF»  (Wave < «c:1350.0»)  «k:THEN»
+      Sig1 := Sig1 * (Wave / «c:1350.0»)**SL(«c:1»);
+    «k:END» «k:IF»;
+    «k:FOR»  L  «k:IN»  «t:1..LM»  «k:LOOP»
+      «k:IF»  (Wave <= W_lim(L))  «k:THEN»
+        Sig := Al(L) * (Wave / W_lim(L))**Sl(L);
+        «k:IF»  (L = «c:1»)  «k:THEN»
+          Sig := Sig1;
+        «k:END» «k:IF»;
+        Opac := Opac + Sig * («c:1.0» - Exp (-C2 / (Wave * Temp)) / Bl(L)) *
+                      (Zeta_0 * Gl(L) * Exp (-C2 * Dw(L) / Temp) * Bl(L));
+      «k:END» «k:IF»;
+    «k:END» «k:LOOP»;
+    «k:RETURN»  Opac * «c:1».0E8;
+  «k:END»  «f:Chi_Si»;
+
+  «m:-------------------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Chi_Fe» (Temp   : Real;
+                    Wave   : Real;
+                    Zeta_0 : Real;
+                    Bl     : Level_Arr)  «k:RETURN»  Real  «k:IS»
+
+    «k:PRAGMA» «f:OPTIMIZE» (Time);
+
+    «m:--  »«x:Opacity per unit volume (cm-1) due to the photoionisation of
+»    «m:--  »«x:neutral Iron (Fe I) at the wavelength W (in Angstroems).
+»    «m:--  »«x:Zeta_0 = N0 / U0 = number of C I atoms per cm3 divided by the
+»    «m:--  »«x:partition function of C I .
+»    «m:--  »«x:Bl(L) = Departure coefficients from LTE of the population of level L .
+»    «m:--  »«x:One takes into account 2 levels of Fe I .
+»    «m:--  »«x:Numerical data -- see Vernazza et al., ApJS, 30, p. 7, Table 8 (1976) .
+»
+    W_lim : «k:CONSTANT» «t:ARRAY» («c:1..2»)  «k:OF» «t:Real» :=
+         ( «c:1570.0», «c:1761.0» );
+    Al : «k:CONSTANT» «t:ARRAY» («c:1..2»)  «k:OF» «t:Real» :=
+         ( «c:6.3», «c:5.04» );
+    Sl : «k:CONSTANT» «t:ARRAY» («c:1..2»)  «k:OF» «t:Real» :=
+         ( «c:3.0», «c:3.0» );
+    Gl : «k:CONSTANT» «t:ARRAY» («c:1..2»)  «k:OF» «t:Real» :=
+         ( «c:9.0», «c:11.0» );
+    Dw : «k:CONSTANT» «t:ARRAY» («c:1..2»)  «k:OF» «t:Real» :=
+         («c:0.0», «c:6».908350E-«c:5» );
+
+    LM   : «k:CONSTANT» «t:Integer»  := «c:2»;
+    Opac : Real              := «c:0.0»;
+    Sig  : Real;
+  «k:BEGIN»
+    «k:FOR»  L  «k:IN»  «t:1..LM»  «k:LOOP»
+      «k:IF»  (Wave <= W_lim(L))  «k:THEN»
+        Sig  := Al(L) * (Wave / W_lim(L))**Sl(L);
+        Opac := Opac + Sig * («c:1.0» - Exp (-C2 / (Wave * Temp)) / Bl(L)) *
+                      (Zeta_0 * Gl(L) * Exp (-C2 * Dw(L) / Temp) * Bl(L));
+      «k:END» «k:IF»;
+    «k:END» «k:LOOP»;
+    «k:RETURN»  Opac * «c:1».0E8;
+  «k:END»  «f:Chi_Fe»;
+
+«k:END»  «f:Continuous_Opacity»;
+
+«k:GENERIC»
+  «k:TYPE»  «t:Real»      «k:IS» «k:DIGITS»  <>;
+  «k:TYPE»  «t:Real_Arr»  «k:IS» «k:ARRAY» (Integer «k:RANGE» <>)  «k:OF»  «t:Real»;
+«k:PACKAGE»  «f:Provide_partition_function»  «k:IS»
+
+  «m:--    »«x:Provides the partition functions for the Nma degrees
+»  «m:--    »«x:of ionisation of the element Iel as a function of
+»  «m:--    »«x:temperature T (Theta = 5040.0 / T) according to the
+»  «m:--    »«x:procedure of Traving, Baschek and Holweger, Abh. der
+»  «m:--    »«x:Hamburger Sternwarte, Vol. VIII, Nr. 1, 1966 .
+»  «m:--»«x:
+»  «m:--    »«x:Written 1996 by Martin J. Stift
+»  «m:--                    »«x:Institut fuer Astronomie
+»  «m:--                    »«x:Tuerkenschanzstr. 17
+»  «m:--                    »«x:A-1180 Wien
+»  «m:--                    »«x:AUSTRIA
+»  «m:--»«x:
+»  «m:--                    »«x:e-mail:  stift@astro.univie.ac.at
+»  «m:--»«x:
+»  «m:--    »«x:This program is free software; you can redistribute it and/or modify
+»  «m:--    »«x:it under the terms of the GNU General Public License as published by
+»  «m:--    »«x:the Free Software Foundation; either version 2 of the License, or
+»  «m:--    »«x:(at your option) any later version.
+»  «m:--»«x:
+»  «m:--    »«x:This program is distributed in the hope that it will be useful,
+»  «m:--    »«x:but WITHOUT ANY WARRANTY; without even the implied warranty of
+»  «m:--    »«x:MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+»  «m:--    »«x:GNU General Public License for more details.
+»  «m:--»«x:
+»  «m:--    »«x:You should have received a copy of the GNU General Public License
+»  «m:--    »«x:along with this program; if not, write to the Free Software
+»  «m:--    »«x:Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+»
+  «k:TYPE»  «t:Atom_type»  «k:IS» «k:RECORD»
+    Isyb  : Integer;  «m:-- »«x:Identification
+»    Eps_g : Real;  «m:-- »«x:Abundances, IAU Comm. 12, Grenoble, 1976 (AB(HE) = 0.1).
+»    Eps_k : Real;  «m:-- »«x:Abundances according to Kurucz (1979)
+»    Mass  : Real;  «m:-- »«x:Atomic masses, Allen, Astrophysical Quantities (1973).
+»  «k:END» «k:RECORD»;
+
+  No_elements : «k:CONSTANT» «t:Integer»      :=  «c:21»;
+  Nma_max     : «k:CONSTANT» «t:Integer»      :=   «c:8»;
+  Q           : Real_Arr(«c:1»..Nma_max);
+  Chi_ion     : Real_Arr(«c:1»..Nma_max);
+
+  Atoms : «k:CONSTANT» «t:ARRAY» («c:1»..No_elements)  «k:OF»  «t:Atom_type» :=
+      ( ( «c:1»,  «c:12.0», «c:12.0»,   «c:1.008»),   ( «c:2», «c:11.0», «c:11.05»,  «c:4.0026»),
+        ( «c:6»,  «c:8.67»,  «c:8.57», «c:12.0111»),  ( «c:7»,  «c:7.96», «c:8.06», «c:14.0067»),
+        ( «c:8»,  «c:8.90»,  «c:8.83», «c:15.9994»),  («c:10»,  «c:7.90», «c:7.45», «c:20.179»),
+        («c:11»,  «c:6.29»,  «c:6.24», «c:22.9898»),  («c:12»,  «c:7.56», «c:7.54», «c:24.305»),
+        («c:13»,  «c:6.40»,  «c:6.40», «c:26.9815»),  («c:14»,  «c:7.60», «c:7.55», «c:28.086»),
+        («c:15»,  «c:5.45»,  «c:5.43», «c:30.9738»),  («c:16»,  «c:7.25», «c:7.21», «c:32.06»),
+        («c:18»,  «c:6.30»,  «c:6.65», «c:39.948»),   («c:19»,  «c:5.14», «c:5.05», «c:39.102»),
+        («c:20»,  «c:6.32»,  «c:6.33», «c:40.08»),    («c:22»,  «c:5.00», «c:4.74», «c:47.90»),
+        («c:24»,  «c:5.70»,  «c:5.70», «c:51.996»),   («c:25»,  «c:5.40», «c:5.20», «c:54.938»),
+        («c:26»,  «c:7.50»,  «c:7.55», «c:55.847»),   («c:27»,  «c:5.00», «c:4.50», «c:58.9332»),
+        («c:28»,  «c:6.30»,  «c:6.28», «c:58.71» )                                  );
+
+  «m:-----------------------------------------»«x:
+»  «k:FUNCTION»  «f:Exp10» (X : Real)  «k:RETURN»  Real;
+
+  «m:--------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Qas» (L    : Real;
+                 N    : Integer;
+                 DChi : Real;
+                 Th   : Real   )  «k:RETURN» Real;
+
+  «m:--------------------------------------------------------------------------»«x:
+»  «k:PROCEDURE»  «f:Partition_function»
+   (Iflag   : «k:IN OUT»  «t:Integer»;     «m:-- »«x:if successful => 1
+»    Iel     : «k:IN»      «t:Integer»;     «m:-- »«x:number of element in periodic table
+»    DChi    : «k:IN»      «t:Real»;        «m:-- »«x:lowering of ionisation potential
+»    Theta   : «k:IN»      «t:Real»;        «m:-- »«x:inverse temperature
+»    Q       : «k:IN OUT»  «t:Real_arr»;    «m:-- »«x:partition functions
+»    Chi_ion : «k:IN OUT»  «t:Real_arr»;    «m:-- »«x:ionisation potentials
+»    Nma     : «k:IN OUT»  «t:Integer»  );  «m:-- »«x:no. of ionsation stages considered
+»
+«k:END»  «f:Provide_partition_function»;
+«k:WITH»  «c:Ada.Numerics.Generic_Elementary_Functions»;
+«k:PACKAGE BODY»  «f:Provide_partition_function»  «k:IS»
+
+  «m:--    »«x:Provides the partition functions for the Nma degrees
+»  «m:--    »«x:of ionisation of the element Iel as a function of
+»  «m:--    »«x:temperature T (Theta = 5040.0 / T) according to the
+»  «m:--    »«x:procedure of Traving, Baschek and Holweger, Abh. der
+»  «m:--    »«x:Hamburger Sternwarte, Vol. VIII, Nr. 1, 1966 .
+»  «m:--»«x:
+»  «m:--    »«x:Written 1996 by Martin J. Stift
+»  «m:--                    »«x:Institut fuer Astronomie
+»  «m:--                    »«x:Tuerkenschanzstr. 17
+»  «m:--                    »«x:A-1180 Wien
+»  «m:--                    »«x:AUSTRIA
+»  «m:--»«x:
+»  «m:--                    »«x:e-mail:  stift@astro.univie.ac.at
+»  «m:--»«x:
+»  «m:--    »«x:This program is free software; you can redistribute it and/or modify
+»  «m:--    »«x:it under the terms of the GNU General Public License as published by
+»  «m:--    »«x:the Free Software Foundation; either version 2 of the License, or
+»  «m:--    »«x:(at your option) any later version.
+»  «m:--»«x:
+»  «m:--    »«x:This program is distributed in the hope that it will be useful,
+»  «m:--    »«x:but WITHOUT ANY WARRANTY; without even the implied warranty of
+»  «m:--    »«x:MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+»  «m:--    »«x:GNU General Public License for more details.
+»  «m:--»«x:
+»  «m:--    »«x:You should have received a copy of the GNU General Public License
+»  «m:--    »«x:along with this program; if not, write to the Free Software
+»  «m:--    »«x:Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+»
+  «k:PACKAGE»  «f:Math»  «k:IS» «k:NEW»  «f:Ada.Numerics.Generic_Elementary_Functions» (Real);
+  «k:USE»      «c:Math»;
+
+  «m:--------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Exp10» (X : Real)  «k:RETURN»  Real  «k:IS»
+    Ln10 : «k:CONSTANT» «t:Real»  := Log («c:10.0»);
+  «k:BEGIN»
+    «k:RETURN»  Exp (x * Ln10);
+  «k:END»;
+
+  «m:----------------------------------------------»«x:
+»  «k:FUNCTION»  «f:Qas» (L    : Real;
+                 N    : Integer;
+                 DChi : Real;
+                 Th   : Real   )  «k:RETURN» Real «k:IS»
+
+    «m:--  »«x:effective nuclear charge H
+»
+    cRydberg : «k:CONSTANT» «t:Real» := «c:13.595»;         «m:-- »«x:eV
+»    H        : «k:CONSTANT» «t:Real» := Sqrt (Real (N) * cRydberg / DChi);
+    Effk     : «k:CONSTANT» «t:Real» := Th * «c:31.321» * Real (N**«c:2»);
+  «k:BEGIN»
+    «k:RETURN»  (H * (H + «c:1.0») * (H + «c:0.5») - L * (L - «c:1.0») * (L - «c:0.5»))
+             / «c:3.0» - Effk * (H - L + «c:1.0»)
+             * («c:1.0» - (Effk / «c:2.0») / H / (L - «c:1.0»));
+  «k:END»  «f:Qas»;
+
+  «m:---------------------------------»«x:
+»  «k:PROCEDURE»  «f:Partition_function»
+   (Iflag   : «k:IN OUT»  «t:Integer»;
+    Iel     : «k:IN»      «t:Integer»;
+    DChi    : «k:IN»      «t:Real»;
+    Theta   : «k:IN»      «t:Real»;
+    Q       : «k:IN OUT»  «t:Real_arr»;
+    Chi_ion : «k:IN OUT»  «t:Real_arr»;
+    Nma     : «k:IN OUT»  «t:Integer» )  «k:IS»
+
+    «k:TYPE»  «t:Part_data_type»  «k:IS» «k:ARRAY» («c:1..175»)  «k:OF»  «t:Real»;
+
+    G : «k:ARRAY» («c:1»..No_elements)  «k:OF»  «t:Part_data_type» :=
+
+      ( «c:1» => (  «c:2.000»,   «c:1.000»,  «c:2.000»,   «c:2.000»,  «c:2.000», «c:13.595», «c:11.000»,
+               «c:10.853»,  «c:20.498», «c:13.342», «c:747.502»,  «c:1.000»,  «c:1.000»,  «c:0.000»,
+                «c:0.000», «c:999.999»,  «c:1.000»,
+               «k:OTHERS» => «c:0.0»                                                  ),
+
+        «c:2» => (  «c:2.000»,  «c:1.000»,  «c:1.000»,   «c:2.000»,  «c:4.000», «c:24.580»,   «c:8.000»,
+               «c:21.170», «c:28.170», «c:24.125», «c:527.830»,  «c:1.000»,  «c:2.000»,   «c:2.000»,
+                «c:2.000», «c:54.403», «c:12.000»,  «c:43.708», «c:22.281», «c:53.542», «c:987.719»,
+               «k:OTHERS» => «c:0.0»                                                  ),
+
+        «c:3» => (  «c:5.000»,   «c:1.000»,   «c:1.000»,  «c:4.000», «c:12.000»,  «c:11.256»,   «c:6.000»,
+                «c:0.004»,   «c:8.016»,   «c:1.359»,  «c:5.883»,  «c:6.454»,  «c:33.752»,  «c:10.376»,
+              «c:595.343»,   «c:2.000»,   «c:2.000»,  «c:3.000»,  «c:2.000»,  «c:24.376»,   «c:6.000»,
+                «c:0.008»,   «c:4.000»,  «c:16.546», «c:17.084», «c:21.614»,  «c:82.915»,   «c:3.000»,
+               «c:18.000»,  «c:30.868»,   «c:5.000»,  «c:5.688», «c:15.981»,  «c:15.801»,  «c:48.204»,
+               «c:26.269», «c:435.809»,   «c:2.000»,  «c:1.000»,  «c:3.000»,   «c:4.000»,  «c:47.871»,
+                «c:6.100»,   «c:6.691»,  «c:10.028», «c:25.034», «c:15.757»,  «c:40.975», «c:186.211»,
+                «c:3.000»,  «c:12.000»,  «c:55.873»,  «c:5.000», «c:17.604»,  «c:15.413»,  «c:36.180»,
+               «c:55.956»,  «c:47.133», «c:243.631»,  «c:1.000»,  «c:2.000»,   «c:3.000»,   «c:2.000»,
+               «c:64.476»,   «c:6.000»,   «c:8.005»,  «c:6.006», «c:40.804»,  «c:23.576»,  «c:54.492»,
+               «c:76.418»,   «c:1.000»,   «c:1.000»,  «c:2.000»,  «c:4.000», «c:391.986»,   «c:4.000»,
+              «c:303.772»,  «c:15.799», «c:354.208», «c:36.200»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+        «c:4» => (  «c:5.000»,   «c:2.000»,  «c:4.000»,  «c:3.000»,  «c:18.000»,  «c:14.529»,   «c:6.100»,
+                «c:2.554»,  «c:14.050»,  «c:9.169», «c:30.801»,  «c:13.651», «c:883.144»,   «c:3.000»,
+               «c:10.000»,  «c:16.428»,  «c:4.000», «c:12.353»,  «c:10.000»,  «c:13.784»,  «c:16.000»,
+               «c:14.874»,  «c:64.000»,  «c:2.000»,  «c:1.000»,   «c:4.000»,  «c:12.000»,  «c:29.593»,
+                «c:5.000»,   «c:0.014»,  «c:8.046»,  «c:2.131»,   «c:6.267»,  «c:15.745»,  «c:17.870»,
+               «c:24.949», «c:282.808»,  «c:3.000», «c:24.000»,  «c:36.693»,   «c:3.900»,   «c:6.376»,
+                «c:7.375»,  «c:14.246», «c:33.139», «c:29.465», «c:215.483»,   «c:3.000»,   «c:2.000»,
+                «c:3.000»,   «c:2.000», «c:47.426»,  «c:6.000»,   «c:0.022»,   «c:4.000»,  «c:31.259»,
+               «c:19.353»,  «c:41.428», «c:80.646»,  «c:4.000»,  «c:18.000»,  «c:55.765»,   «c:5.000»,
+                «c:7.212»,  «c:13.100», «c:15.228», «c:19.642»,  «c:34.387»,  «c:94.303»,  «c:46.708»,
+              «c:370.954»,   «c:2.000»,  «c:6.000», «c:63.626»,   «c:4.000»,  «c:46.475»,  «c:16.000»,
+               «c:49.468»,  «c:38.000»,  «c:2.000»,  «c:1.000»,   «c:3.000»,   «c:4.000»,  «c:77.450»,
+                «c:6.000»,   «c:8.693», «c:10.329», «c:37.650»,  «c:14.502»,  «c:65.479», «c:187.162»,
+                «c:2.000»,  «c:12.000», «c:87.445»,  «c:6.300»,  «c:61.155», «c:108.161»,  «c:79.196»,
+              «c:191.838»,   «c:1.000»,  «c:2.000»,  «c:3.000»,   «c:2.000»,  «c:97.863»,   «c:6.000»,
+                «c:9.999»,   «c:6.004», «c:60.991», «c:23.561»,  «c:82.262»,  «c:76.434»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+        «c:5» => (  «c:5.000»,   «c:3.000»,   «c:5.000»,   «c:3.000»,   «c:8.000»,  «c:13.614»,   «c:8.000»,
+                «c:0.022»,   «c:4.003»,   «c:2.019»,   «c:5.366»,   «c:9.812»,  «c:36.285»,   «c:2.000»,
+               «c:20.000»,  «c:16.938»,   «c:6.000»,  «c:13.804», «c:131.022»,  «c:16.061», «c:868.978»,
+                «c:2.000»,  «c:12.000»,  «c:18.630»,   «c:3.400»,  «c:14.293»,  «c:14.853»,  «c:16.114»,
+               «c:93.147»,   «c:4.000»,   «c:4.000»,   «c:4.000»,  «c:18.000»,  «c:35.108»,   «c:6.000»,
+                «c:3.472»,  «c:12.784»,   «c:7.437»,   «c:5.683»,  «c:22.579»,  «c:98.092»,  «c:32.035»,
+              «c:829.440»,   «c:2.000»,  «c:10.000»,  «c:37.621»,   «c:5.000»,  «c:27.774»,  «c:50.988»,
+               «c:33.678», «c:199.012»,   «c:3.000»,   «c:2.000»,  «c:40.461»,   «c:3.900»,  «c:28.118»,
+                «c:2.000»,  «c:31.019»,   «c:6.000»,  «c:34.204»,  «c:10.000»,   «c:3.000»,  «c:10.000»,
+               «c:42.584»,   «c:3.900»,  «c:30.892»,  «c:10.000»,  «c:33.189»,  «c:30.000»,  «c:36.181»,
+               «c:50.000»,   «c:3.000»,   «c:1.000»,   «c:4.000»,  «c:12.000»,  «c:54.886»,   «c:6.000»,
+                «c:0.032»,   «c:8.070»,   «c:2.760»,   «c:5.714»,  «c:35.328»,  «c:84.116»,  «c:48.277»,
+              «c:529.093»,   «c:4.000»,  «c:24.000»,  «c:63.733»,   «c:4.900»,   «c:7.662»,   «c:5.661»,
+               «c:16.786»,  «c:28.936»,  «c:42.657», «c:111.362»,  «c:54.522», «c:494.041»,   «c:2.000»,
+               «c:20.000»,  «c:70.556»,   «c:4.000»,  «c:50.204»,  «c:45.525»,  «c:56.044», «c:134.475»,
+                «c:5.000»,   «c:2.000»,   «c:3.000»,   «c:2.000»,  «c:77.394»,   «c:5.900»,   «c:0.048»,
+                «c:4.000»,  «c:50.089»,  «c:21.294»,  «c:66.604»,  «c:78.706»,   «c:4.000»,  «c:18.000»,
+               «c:87.609»,   «c:5.000»,   «c:8.954»,  «c:12.829»,  «c:18.031»,  «c:16.273»,  «c:57.755»,
+              «c:123.658»,  «c:72.594», «c:327.240»,   «c:2.000»,   «c:6.000»,  «c:97.077»,   «c:4.900»,
+               «c:68.388»,  «c:48.788»,  «c:82.397», «c:102.212»,   «c:2.000»,  «c:18.000», «c:103.911»,
+                «c:4.000»,  «c:31.960»,  «c:20.006»,  «c:76.876», «c:161.990»,   «c:2.000»,  «c:10.000»,
+              «c:106.116»,   «c:4.000»,  «c:75.686»,  «c:28.418»,  «c:80.388»,  «c:61.582»,   «c:2.000»,
+                «c:1.000»,   «c:3.000»,   «c:4.000», «c:113.873»,   «c:6.000»,  «c:10.747»,  «c:10.556»,
+               «c:52.323»,  «c:13.295»,  «c:94.976», «c:188.139»,   «c:3.000»,  «c:12.000», «c:125.863»,
+                «c:6.000»,  «c:27.405»,  «c:14.656»,  «c:86.350», «c:129.492», «c:109.917», «c:470.851»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+        «c:6» => (  «c:5.000»,   «c:2.000»,   «c:1.000»,   «c:2.000»,   «c:8.000»,  «c:21.559»,   «c:6.000»,
+               «c:17.796»,  «c:34.508»,  «c:20.730», «c:365.492»,   «c:2.000»,   «c:4.000»,  «c:21.656»,
+                «c:6.000»,  «c:17.879»,  «c:16.577»,  «c:20.855», «c:183.423»,   «c:2.000»,   «c:4.000»,
+                «c:3.000»,  «c:18.000»,  «c:41.071»,   «c:5.000»,   «c:0.097»,   «c:2.001»,  «c:29.878»,
+               «c:89.561»,  «c:37.221», «c:380.438»,   «c:2.000»,  «c:10.000»,  «c:44.274»,   «c:4.000»,
+               «c:31.913»,  «c:26.447»,  «c:37.551»,  «c:63.553»,   «c:3.000»,   «c:5.000»,   «c:4.000»,
+                «c:8.000»,  «c:63.729»,   «c:3.900»,   «c:0.092»,   «c:4.034»,   «c:3.424»,   «c:5.616»,
+               «c:24.806»,  «c:11.518»,  «c:46.616»,  «c:72.827»,   «c:2.000»,  «c:20.000»,  «c:68.806»,
+                «c:4.000»,  «c:45.643»,  «c:48.568»,  «c:54.147», «c:131.431»,   «c:2.000»,  «c:12.000»,
+               «c:71.434»,   «c:4.000»,  «c:48.359»,  «c:31.171»,  «c:57.420»,  «c:76.829»,   «c:2.000»,
+                «c:4.000»,   «c:4.000»,  «c:18.000»,  «c:97.162»,   «c:5.000»,   «c:5.453»,  «c:14.048»,
+               «c:18.560»,  «c:13.308»,  «c:46.583»,  «c:52.790»,  «c:80.101», «c:467.849»,   «c:2.000»,
+               «c:10.000», «c:100.917»,   «c:5.000»,  «c:70.337»,  «c:54.220»,  «c:85.789», «c:195.780»,
+                «c:1.000»,   «c:1.000»,   «c:4.000»,  «c:12.000», «c:126.423»,   «c:4.000»,   «c:0.135»,
+                «c:8.381»,   «c:5.497»,   «c:7.972»,  «c:26.121»,  «c:39.332»,  «c:86.665», «c:154.283»,
+               «k:OTHERS» => «c:0.0»                                                  ),
+
+        «c:7» => (  «c:5.000»,   «c:1.000»,   «c:2.000»,   «c:2.000»,   «c:2.000»,   «c:5.138»,   «c:7.000»,
+                «c:2.400»,  «c:11.635»,   «c:4.552», «c:158.359»,   «c:2.000»,   «c:1.000»,   «c:2.000»,
+                «c:8.000»,  «c:47.290»,   «c:4.000»,  «c:34.367»,  «c:21.045»,  «c:40.566»,  «c:50.955»,
+                «c:2.000»,   «c:4.000»,  «c:47.459»,   «c:4.000»,  «c:34.676»,  «c:10.139»,  «c:40.764»,
+               «c:25.861»,   «c:2.000»,   «c:4.000»,   «c:3.000»,  «c:18.000»,  «c:71.647»,   «c:4.000»,
+                «c:0.170»,   «c:2.002»,  «c:44.554»,  «c:38.057»,  «c:57.142», «c:137.940»,   «c:2.000»,
+               «c:10.000»,  «c:75.504»,   «c:4.000»,  «c:51.689»,  «c:28.311»,  «c:60.576»,  «c:61.689»,
+                «c:3.000»,   «c:5.000»,   «c:4.000»,   «c:8.000»,  «c:98.880»,   «c:5.000»,   «c:0.152»,
+                «c:4.033»,   «c:4.260»,   «c:5.856»,  «c:36.635»,  «c:18.179»,  «c:83.254», «c:208.914»,
+                «c:2.000»,  «c:20.000», «c:104.778»,   «c:5.000»,  «c:72.561»,  «c:93.689»,  «c:89.475»,
+              «c:406.309»,   «c:2.000»,  «c:12.000», «c:107.864»,   «c:5.000»,  «c:75.839»,  «c:60.428»,
+               «c:92.582», «c:239.572»,   «c:5.000»,   «c:4.000»,   «c:4.000»,  «c:18.000», «c:138.597»,
+                «c:5.000»,   «c:5.930»,  «c:10.317»,   «c:9.127»,   «c:5.697»,  «c:94.219», «c:121.073»,
+              «c:115.690», «c:340.913»,   «c:2.000»,  «c:10.000», «c:142.980»,   «c:5.000»,  «c:97.783»,
+               «c:63.792»,  «c:12.110», «c:186.208»,   «c:2.000»,   «c:2.000», «c:147.803»,   «c:4.000»,
+               «c:92.769»,   «c:2.000», «c:108.400»,  «c:16.000»,   «c:3.000»,  «c:10.000», «c:151.427»,
+                «c:4.000»,  «c:28.372»,  «c:17.927»,  «c:49.002»,  «c:18.704», «c:111.473»,  «c:91.369»,
+                «c:2.000»,  «c:30.000», «c:163.906»,   «c:4.000», «c:110.226»,  «c:36.852», «c:125.690»,
+              «c:233.147»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+        «c:8» => (  «c:5.000»,   «c:1.000»,   «c:1.000»,   «c:3.000»,   «c:4.000»,   «c:7.644»,   «c:7.000»,
+                «c:2.805»,  «c:10.744»,   «c:6.777», «c:291.506»,   «c:9.254»,  «c:53.749»,   «c:1.000»,
+                «c:2.000»,   «c:3.000»,   «c:2.000»,  «c:15.031»,   «c:7.000»,   «c:4.459»,   «c:6.227»,
+                «c:9.789»,  «c:31.129»,  «c:13.137», «c:132.644»,   «c:2.000»,   «c:1.000»,   «c:2.000»,
+                «c:8.000»,  «c:80.117»,   «c:5.000»,  «c:57.413»,  «c:40.438»,  «c:71.252», «c:159.562»,
+                «c:2.000»,   «c:4.000»,  «c:80.393»,   «c:5.000»,  «c:58.010»,  «c:20.384»,  «c:71.660»,
+               «c:79.615»,   «c:2.000»,   «c:4.000»,   «c:3.000»,  «c:18.000», «c:109.294»,   «c:5.000»,
+                «c:0.276»,   «c:2.001»,  «c:74.440», «c:106.898»,  «c:94.447», «c:343.101»,   «c:2.000»,
+               «c:10.000», «c:113.799»,   «c:5.000»,  «c:54.472»,  «c:10.133»,  «c:95.858», «c:237.858»,
+                «c:3.000»,   «c:5.000»,   «c:4.000»,   «c:8.000», «c:141.231»,   «c:5.000»,   «c:0.251»,
+                «c:4.110»,   «c:5.370»,   «c:6.154»,  «c:51.461»,  «c:22.364», «c:121.819», «c:275.334»,
+                «c:2.000»,  «c:20.000», «c:147.944»,   «c:5.000», «c:101.026», «c:117.038», «c:124.652»,
+              «c:382.962»,   «c:2.000»,  «c:12.000», «c:151.493»,   «c:5.000», «c:104.636»,  «c:71.423»,
+              «c:128.118», «c:228.576»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+        «c:9» => (  «c:5.000»,   «c:2.000»,   «c:2.000»,   «c:3.000»,   «c:2.000»,   «c:5.984»,   «c:7.000»,
+                «c:0.014»,   «c:4.001»,   «c:3.841»,  «c:11.780»,   «c:5.420», «c:142.218»,   «c:2.000»,
+               «c:18.000»,  «c:10.634»,   «c:4.000»,   «c:3.727»,  «c:13.658»,   «c:8.833»,  «c:96.337»,
+                «c:2.000»,   «c:1.000»,   «c:3.000»,   «c:4.000»,  «c:18.823»,   «c:7.000»,   «c:4.749»,
+               «c:10.081»,  «c:11.902»,  «c:49.584»,  «c:16.719», «c:285.334»,   «c:2.000»,  «c:12.000»,
+               «c:25.496»,   «c:4.000»,  «c:11.310»,  «c:14.687»,  «c:18.268»,  «c:59.312»,   «c:1.000»,
+                «c:2.000»,   «c:3.000»,   «c:2.000»,  «c:28.441»,   «c:7.000»,   «c:6.751»,   «c:6.328»,
+               «c:16.681»,  «c:29.509»,  «c:24.151», «c:134.163»,   «c:2.000»,   «c:1.000»,   «c:2.000»,
+                «c:8.000», «c:119.957»,   «c:5.000»,  «c:83.551»,  «c:46.316», «c:104.787», «c:153.683»,
+                «c:2.000»,   «c:4.000», «c:120.383»,   «c:5.000»,  «c:84.293»,  «c:22.990», «c:105.171»,
+               «c:77.010»,   «c:1.000»,   «c:4.000»,   «c:4.000»,  «c:18.000», «c:153.772»,   «c:5.000»,
+                «c:0.426»,   «c:2.000»,  «c:46.012»,   «c:2.360», «c:107.928», «c:151.214», «c:131.729»,
+              «c:392.425»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+       «c:10» => (  «c:5.000»,   «c:1.000»,   «c:1.000»,   «c:5.000»,  «c:12.000»,   «c:8.149»,   «c:6.100»,
+                «c:0.020»,   «c:7.966»,   «c:0.752»,   «c:4.676»,   «c:1.614»,   «c:1.351»,   «c:5.831»,
+              «c:123.227»,   «c:7.431», «c:443.780»,   «c:2.000»,   «c:2.000»,   «c:4.000»,   «c:2.000»,
+               «c:16.339»,   «c:5.900»,   «c:0.036»,   «c:4.000»,   «c:8.795»,   «c:7.419»,  «c:11.208»,
+               «c:24.175»,  «c:13.835»,  «c:60.406»,   «c:4.000»,  «c:18.000»,  «c:22.894»,   «c:5.000»,
+                «c:5.418»,  «c:14.469»,   «c:7.825»,  «c:11.972»,  «c:14.440»,  «c:26.506»,  «c:19.412»,
+              «c:269.052»,   «c:2.000»,   «c:1.000»,   «c:4.000»,   «c:4.000»,  «c:33.459»,   «c:5.000»,
+                «c:6.572»,   «c:9.179»,  «c:11.449»,   «c:4.877»,  «c:18.424»,  «c:29.144»,  «c:25.457»,
+               «c:52.800»,   «c:3.000»,  «c:12.000»,  «c:42.333»,   «c:5.000»,  «c:15.682»,  «c:13.267»,
+               «c:27.010»,  «c:36.042»,  «c:34.599», «c:180.691»,   «c:1.000»,   «c:2.000»,   «c:3.000»,
+                «c:2.000»,  «c:45.130»,   «c:7.000»,   «c:9.042»,   «c:6.484»,  «c:24.101»,  «c:27.685»,
+               «c:37.445», «c:135.830»,   «c:2.000»,   «c:1.000»,   «c:2.000»,   «c:8.000», «c:166.725»,
+                «c:4.900», «c:115.608»,  «c:36.982», «c:142.257», «c:163.018»,   «c:2.000»,   «c:4.000»,
+              «c:167.357»,   «c:4.900», «c:118.377»,  «c:19.116», «c:143.084»,  «c:80.884»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+       «c:11» => (  «c:5.000»,  «c:2.000»,   «c:4.000»,  «c:3.000»,  «c:18.000»,  «c:10.474»,   «c:5.000»,
+                «c:1.514», «c:13.521»,   «c:5.575», «c:22.213»,   «c:9.247», «c:353.258»,   «c:2.000»,
+               «c:10.000», «c:11.585»,   «c:5.000»,  «c:8.076»,  «c:10.000»,  «c:10.735», «c:150.000»,
+                «c:1.000»,  «c:1.000»,   «c:4.000», «c:12.000»,  «c:19.720»,   «c:5.000»,   «c:0.043»,
+                «c:8.024»,  «c:1.212»,   «c:5.808»,  «c:8.545»,  «c:51.754»,  «c:15.525», «c:252.400»,
+                «c:1.000»,  «c:2.000»,   «c:4.000»,  «c:2.000»,  «c:30.156»,   «c:7.000»,   «c:0.074»,
+                «c:4.002»,  «c:7.674»,  «c:20.798», «c:16.639»,  «c:62.419»,  «c:25.118», «c:200.779»,
+                «c:1.000»,  «c:1.000»,   «c:3.000»,  «c:4.000»,  «c:51.354»,   «c:8.600»,   «c:8.992»,
+               «c:11.741», «c:24.473»,  «c:63.512», «c:40.704», «c:179.742»,   «c:1.000»,   «c:2.000»,
+                «c:3.000»,  «c:2.000»,  «c:65.007»,  «c:8.000»,  «c:11.464»,   «c:6.883»,  «c:33.732»,
+               «c:32.778», «c:55.455», «c:228.337»,
+               «k:OTHERS» => «c:0.0»                                                  ),
+
+       «c:12» => (  «c:5.000»,   «c:3.000»,   «c:5.000»,   «c:4.000»,  «c:8.000»,  «c:10.357»,   «c:6.000»,
+                «c:0.053»,   «c:3.961»,   «c:1.121»,   «c:5.078»,  «c:5.812»,  «c:15.094»,   «c:9.425»,
+              «c:362.859»,   «c:2.000»,  «c:20.000»,  «c:12.200»,  «c:5.000»,   «c:8.936»,  «c:51.599»,
+               «c:11.277», «c:268.400»,   «c:2.000»,  «c:12.000», «c:13.401»,   «c:5.000»,   «c:9.600»,
+               «c:12.000»,  «c:12.551», «c:276.000»,   «c:2.000»,  «c:4.000»,   «c:4.000»,  «c:18.000»,
+               «c:23.405»,   «c:5.000»,   «c:1.892»,  «c:11.438»,  «c:3.646»,   «c:5.513»,  «c:13.550»,
+              «c:141.001»,  «c:19.376», «c:254.048»,   «c:2.000», «c:10.000»,  «c:24.807»,   «c:5.000»,
+               «c:16.253»,  «c:33.052»,  «c:21.062», «c:126.948»,  «c:1.000»,   «c:1.000»,   «c:5.000»,
+               «c:12.000»,  «c:35.047»,   «c:3.500»,   «c:0.043»,  «c:4.071»,   «c:0.123»,   «c:4.064»,
+                «c:1.590»,   «c:5.724»,  «c:13.712», «c:144.638», «c:22.050», «c:106.491»,   «c:2.000»,
+                «c:2.000»,   «c:4.000»,   «c:2.000»,  «c:47.292»,  «c:5.000»,   «c:0.118»,   «c:4.001»,
+                «c:9.545»,  «c:19.281»,  «c:18.179»,  «c:27.599», «c:31.441»,  «c:35.118»,   «c:2.000»,
+               «c:18.000»,  «c:57.681»,  «c:14.400»,  «c:30.664», «c:94.745»,  «c:56.150», «c:283.249»,
+                «c:2.000»,   «c:1.000»,   «c:3.000»,   «c:4.000», «c:72.474»,   «c:5.000»,  «c:10.704»,
+               «c:10.547»,  «c:27.075»,  «c:28.714»,  «c:50.599», «c:65.738»,   «c:1.000»,  «c:12.000»,
+               «c:85.701»,   «c:4.000»,  «c:43.034»,  «c:24.000»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+       «c:13» => (  «c:5.000»,  «c:2.000»,   «c:1.000»,   «c:2.000»,   «c:8.000»,  «c:15.755»,  «c:6.000»,
+               «c:12.638», «c:43.662»,  «c:14.958», «c:324.337»,   «c:2.000»,   «c:4.000», «c:15.933»,
+                «c:6.000», «c:12.833»,  «c:20.830»,  «c:15.139», «c:163.170»,   «c:2.000»,  «c:4.000»,
+                «c:3.000», «c:18.000»,  «c:27.619»,   «c:5.100»,   «c:0.178»,   «c:2.003», «c:17.522»,
+              «c:137.451», «c:23.584», «c:258.544»,   «c:2.000»,  «c:10.000»,  «c:29.355»,  «c:5.000»,
+               «c:20.464», «c:62.813»,  «c:25.150», «c:149.187»,   «c:3.000»,   «c:5.000»,  «c:4.000»,
+                «c:8.000», «c:40.899»,   «c:5.000»,   «c:0.151»,   «c:4.049»,   «c:1.561», «c:14.447»,
+               «c:17.399», «c:46.823»,  «c:30.871», «c:124.665»,   «c:2.000»,  «c:20.000», «c:42.407»,
+                «c:5.000», «c:24.684», «c:151.983»,  «c:33.978», «c:268.016»,   «c:2.000», «c:12.000»,
+               «c:45.234»,  «c:5.000»,  «c:27.091», «c:101.130»,  «c:36.481», «c:150.869»,  «c:1.000»,
+                «c:4.000»,  «c:4.000»,  «c:18.000»,  «c:59.793»,   «c:5.000»,   «c:2.810», «c:13.372»,
+                «c:8.877»,  «c:8.653»,  «c:24.351»,  «c:60.461»,  «c:44.489», «c:285.507»,  «c:1.000»,
+                «c:1.000»,  «c:4.000»,  «c:12.000»,  «c:75.002»,   «c:4.000»,   «c:0.144»,  «c:6.765»,
+                «c:1.160»,  «c:4.768»,  «c:10.210»,  «c:12.863»,  «c:27.178»,  «c:54.526»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+       «c:14» => (  «c:5.000»,   «c:1.000»,   «c:2.000»,   «c:3.000»,  «c:2.000»,  «c:4.339»,   «c:7.000»,
+                «c:1.871»,  «c:12.978»,   «c:3.713», «c:148.667», «c:18.172»,  «c:6.349»,   «c:2.000»,
+                «c:1.000»,   «c:2.000»,   «c:8.000»,  «c:31.810»,  «c:5.000», «c:21.185»,  «c:66.344»,
+               «c:27.705», «c:101.655»,   «c:3.000»,   «c:4.000», «c:32.079»,  «c:5.000»,   «c:2.059»,
+                «c:4.000»,  «c:23.709»,  «c:13.446»,  «c:28.542», «c:46.553»,  «c:3.000»,   «c:4.000»,
+                «c:3.000»,  «c:18.000»,  «c:45.738»,   «c:6.000»,  «c:0.273»,  «c:2.017»,  «c:26.709»,
+              «c:116.477»,  «c:39.640», «c:713.496»,   «c:2.000», «c:10.000», «c:47.768»,   «c:6.000»,
+               «c:31.220»,  «c:63.591»,  «c:41.865», «c:396.408»,  «c:3.000»,  «c:2.000»,  «c:50.515»,
+                «c:5.000»,  «c:29.955»,   «c:2.000»,  «c:37.557», «c:10.000», «c:42.862»,  «c:30.000»,
+                «c:3.000»,   «c:5.000»,   «c:4.000»,   «c:8.000», «c:60.897»,  «c:6.000»,   «c:0.228»,
+                «c:4.070»,   «c:2.274»,   «c:5.779»,  «c:21.703», «c:52.679», «c:50.191», «c:327.454»,
+                «c:2.000»,  «c:20.000»,  «c:63.890»,   «c:5.000», «c:32.145», «c:62.860»,  «c:49.262»,
+              «c:357.133»,   «c:2.000»,  «c:12.000»,  «c:65.849»,  «c:5.000», «c:34.155»,  «c:55.934»,
+               «c:51.718», «c:196.065»,   «c:2.000»,   «c:4.000»,  «c:4.000», «c:18.000»,  «c:82.799»,
+                «c:3.600»,   «c:3.043»,  «c:10.927»,   «c:5.479»,  «c:5.540», «c:20.547»,  «c:43.276»,
+               «c:30.680»,  «c:76.256»,   «c:2.000»,  «c:10.000», «c:85.150»,  «c:4.000»,  «c:36.275»,
+               «c:42.000»,  «c:47.345»,  «c:18.000»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+       «c:15» => (  «c:4.000»,  «c:2.000»,  «c:1.000»,  «c:3.000»,   «c:4.000»,   «c:6.111»,   «c:5.900»,
+                «c:2.050», «c:18.237»,  «c:3.349», «c:27.501»,   «c:5.321», «c:149.262»,   «c:2.000»,
+               «c:20.000»,  «c:7.808»,  «c:6.000»,  «c:4.873»,  «c:94.524»,   «c:7.017», «c:705.471»,
+                «c:1.000»,  «c:2.000»,  «c:3.000»,  «c:2.000»,  «c:11.868»,   «c:7.000»,   «c:1.769»,
+               «c:11.871»,  «c:5.109», «c:14.071»,  «c:9.524», «c:106.055»,   «c:2.000»,   «c:1.000»,
+                «c:2.000»,  «c:8.000», «c:51.207»,  «c:5.000»,  «c:27.271»,  «c:57.241»,  «c:41.561»,
+              «c:110.757»,  «c:2.000»,  «c:4.000», «c:51.596»,   «c:4.900»,  «c:29.172»,  «c:29.812»,
+               «c:42.140», «c:54.187»,  «c:2.000»,  «c:4.000»,   «c:3.000»,  «c:18.000»,  «c:67.181»,
+                «c:5.000»,  «c:0.394»,  «c:2.018», «c:28.930»,  «c:97.578»,  «c:52.618», «c:282.394»,
+                «c:2.000», «c:10.000», «c:69.536»,  «c:4.300»,  «c:38.593», «c:209.187»,  «c:49.646»,
+              «c:252.813»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+       «c:16» => (  «c:5.000»,  «c:3.000»,   «c:5.000»,  «c:6.000»,  «c:56.000»,   «c:6.818»,  «c:5.000»,
+                «c:0.021»,  «c:7.089»,   «c:0.048»,  «c:8.919»,   «c:1.029»,  «c:17.563»,  «c:2.183»,
+              «c:206.683»,  «c:4.109», «c:438.573»,  «c:5.785», «c:654.172»,   «c:4.000», «c:56.000»,
+                «c:6.953»,  «c:4.700»,   «c:0.846», «c:38.046»,   «c:1.792»,  «c:69.627»,  «c:3.836»,
+              «c:364.284»,  «c:5.787», «c:832.041»,  «c:3.000»,  «c:28.000»,   «c:7.411»,  «c:5.000»,
+                «c:2.561», «c:98.856»,   «c:4.869», «c:57.993»,   «c:6.340», «c:442.150»,  «c:2.000»,
+                «c:4.000»,  «c:6.000»,  «c:42.000», «c:13.635»,   «c:5.000»,   «c:0.023», «c:19.784»,
+                «c:0.124», «c:32.064»,   «c:0.774», «c:37.089»,   «c:1.810», «c:110.668»,  «c:4.980»,
+              «c:288.495»,  «c:9.585», «c:521.884»,  «c:3.000»,  «c:10.000»,  «c:14.685»,  «c:5.000»,
+                «c:1.082», «c:10.000»,   «c:4.928», «c:34.000»,  «c:11.279», «c:120.000»,  «c:1.000»,
+                «c:5.000»,  «c:5.000»,  «c:20.000», «c:28.137»,   «c:5.000»,   «c:0.041», «c:16.169»,
+                «c:1.375», «c:22.355»,   «c:4.768», «c:24.165»,  «c:10.985»,  «c:83.513», «c:19.769»,
+              «c:222.796»,  «c:1.000»,   «c:4.000»,  «c:4.000»,   «c:2.000»,  «c:43.236»,  «c:6.000»,
+                «c:0.048»,  «c:6.002»,  «c:11.577»,  «c:4.618»,  «c:24.531»,  «c:25.264», «c:36.489»,
+               «c:52.116»,  «c:1.000»,   «c:1.000»,  «c:2.000»,  «c:12.000», «c:100.083»,  «c:4.800»,
+               «c:54.436», «c:12.000»,  «c:75.373»,  «c:8.000»,
+               «k:OTHERS» => «c:0.0»                                                  ),
+
+       «c:17» => (  «c:6.000»,   «c:3.000»,  «c:7.000»,   «c:3.000»,  «c:12.000»,   «c:6.763»,   «c:5.000»,
+                «c:0.993»,  «c:30.184»,  «c:3.070»,  «c:79.285»,   «c:5.673», «c:149.529»,   «c:3.000»,
+               «c:60.000»,   «c:8.285»,  «c:5.000»,   «c:3.339», «c:215.370»,   «c:4.801», «c:119.197»,
+                «c:7.198», «c:741.432»,  «c:1.000»,  «c:40.000»,   «c:9.221»,   «c:5.000»,   «c:2.829»,
+              «c:184.995»,   «c:2.000»,  «c:6.000»,   «c:4.000»,  «c:50.000»,  «c:16.493»,   «c:5.000»,
+                «c:1.645»,  «c:46.619»,  «c:3.727», «c:160.136»,   «c:7.181», «c:488.045»,  «c:12.299»,
+              «c:657.193»,   «c:4.000», «c:18.000»,  «c:18.662»,   «c:5.000»,   «c:2.902»,  «c:47.174»,
+                «c:4.273», «c:267.027»,  «c:8.569», «c:441.132»,  «c:14.912», «c:150.665»,   «c:1.000»,
+                «c:1.000»,   «c:4.000», «c:56.000»,  «c:30.950»,   «c:5.000»,   «c:0.047»,  «c:24.377»,
+                «c:2.556», «c:122.836»,  «c:9.441», «c:285.509»,  «c:21.198», «c:794.165»,   «c:1.000»,
+                «c:4.000»,   «c:4.000», «c:42.000»,  «c:49.580»,   «c:5.000»,   «c:0.078»,  «c:24.230»,
+                «c:2.242»,  «c:75.026», «c:15.638», «c:172.945»,  «c:32.725», «c:543.651»,   «c:1.000»,
+                «c:5.000»,   «c:4.000», «c:20.000»,  «c:73.093»,   «c:5.200»,   «c:0.103»,  «c:15.982»,
+                «c:2.146»,  «c:17.680», «c:26.153»,  «c:95.200»,  «c:49.381», «c:225.095»,   «c:1.000»,
+                «c:4.000»,   «c:3.000»,  «c:2.000»,  «c:90.595»,   «c:4.900»,   «c:0.119»,   «c:6.001»,
+               «c:32.711»,   «c:6.873», «c:58.117»,  «c:15.125»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+       «c:18» => (  «c:6.000»,   «c:3.000»,  «c:6.000»,   «c:3.000»,  «c:14.000»,   «c:7.432»,   «c:6.000»,
+                «c:2.527»,  «c:53.911»,  «c:4.204»,  «c:81.393»,   «c:6.602», «c:546.694»,   «c:2.000»,
+               «c:10.000»,   «c:8.606»,  «c:5.000»,   «c:4.155», «c:144.189»,   «c:7.321», «c:407.803»,
+                «c:2.000»,  «c:50.000»,  «c:9.240»,   «c:6.000»,   «c:2.285»,  «c:45.618»,   «c:5.631»,
+              «c:298.442»,   «c:2.000»,  «c:7.000»,   «c:4.000»,  «c:12.000»,  «c:15.636»,   «c:7.000»,
+                «c:1.496»,  «c:22.638»,  «c:3.839»,  «c:93.842»,   «c:7.751», «c:183.937»,  «c:13.484»,
+              «c:907.576»,   «c:4.000», «c:72.000»,  «c:18.963»,   «c:5.000»,   «c:3.681», «c:137.041»,
+                «c:6.054», «c:168.678»,  «c:9.934», «c:329.029»,  «c:14.936», «c:773.251»,   «c:1.000»,
+                «c:6.000»,   «c:4.000», «c:50.000»,  «c:33.690»,   «c:5.000»,   «c:3.531»,  «c:70.192»,
+                «c:6.967»,  «c:72.337», «c:15.222», «c:213.951»,  «c:25.069», «c:539.516»,   «c:1.000»,
+                «c:1.000»,   «c:4.000», «c:56.000»,  «c:53.001»,   «c:5.000»,   «c:0.071»,  «c:24.237»,
+                «c:2.896»,  «c:93.541», «c:20.725», «c:456.617»,  «c:37.383», «c:506.548»,   «c:1.000»,
+                «c:4.000»,   «c:4.000», «c:42.000»,  «c:76.006»,   «c:5.000»,   «c:0.126»,  «c:24.769»,
+                «c:2.660»,  «c:66.990», «c:28.528», «c:264.185»,  «c:53.413», «c:484.016»,   «c:1.000»,
+                «c:5.000»,   «c:4.000», «c:20.000», «c:109.002»,   «c:3.700»,   «c:0.117»,  «c:12.314»,
+                «c:0.350»,   «c:4.305»,  «c:2.539»,  «c:22.242»,  «c:40.301»,  «c:60.120»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+       «c:19» => (  «c:5.000»,   «c:3.000»,   «c:9.000»,   «c:4.000»,  «c:60.000»,   «c:7.896»,   «c:5.000»,
+                «c:0.066»,  «c:14.410»,   «c:0.339»,   «c:2.705»,   «c:2.897», «c:421.661»,   «c:6.585»,
+              «c:940.148»,   «c:4.000»,  «c:56.000»,   «c:8.195»,   «c:5.000»,   «c:0.923»,  «c:36.219»,
+                «c:1.679»,  «c:22.888»,   «c:4.620», «c:239.600»,   «c:7.053», «c:825.292»,   «c:3.000»,
+               «c:40.000»,   «c:8.927»,   «c:5.000»,   «c:4.249», «c:110.024»,   «c:5.875», «c:992.304»,
+                «c:7.781», «c:640.671»,   «c:2.000»,  «c:10.000»,   «c:4.000»,  «c:50.000»,  «c:16.178»,
+                «c:5.000»,   «c:0.062»,  «c:17.049»,   «c:0.283»,  «c:32.378»,   «c:1.504»,  «c:34.318»,
+                «c:5.430», «c:420.963»,   «c:3.000»,  «c:18.000»,  «c:18.662»,   «c:5.000»,   «c:2.792»,
+              «c:154.006»,   «c:7.627», «c:462.112»,  «c:13.623», «c:329.862»,   «c:2.000»,   «c:9.000»,
+                «c:4.000»,  «c:12.000»,  «c:30.640»,   «c:6.000»,   «c:0.077»,  «c:15.791»,   «c:3.723»,
+               «c:47.119»,  «c:12.137», «c:279.929»,  «c:23.700», «c:692.100»,   «c:4.000»,  «c:72.000»,
+               «c:34.607»,   «c:5.000»,   «c:2.688»,  «c:91.021»,   «c:7.595», «c:206.308»,  «c:15.444»,
+              «c:706.993»,  «c:25.587», «c:836.669»,   «c:1.000»,   «c:6.000»,   «c:4.000»,  «c:50.000»,
+               «c:56.001»,   «c:3.600»,   «c:3.982»,  «c:40.079»,   «c:4.677»,  «c:27.696»,   «c:6.453»,
+               «c:28.224»,  «c:23.561»,  «c:18.000»,   «c:1.000»,   «c:1.000»,   «c:4.000»,  «c:56.000»,
+               «c:79.001»,   «c:3.800»,   «c:0.102»,  «c:24.090»,   «c:3.354»,  «c:89.634»,  «c:22.954»,
+               «c:51.576»,  «c:33.796», «c:241.698»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+       «c:20» => (  «c:4.000»,   «c:4.000»,  «c:10.000»,   «c:5.000»,  «c:42.000»,   «c:7.863»,   «c:5.000»,
+                «c:0.112»,  «c:11.912»,   «c:0.341»,  «c:20.442»,   «c:0.809»,  «c:28.386»,   «c:3.808»,
+              «c:132.504»,   «c:6.723», «c:600.746»,   «c:3.000»,  «c:70.000»,   «c:8.378»,   «c:5.000»,
+                «c:2.057»,  «c:33.309»,   «c:3.484», «c:237.433»,   «c:7.210», «c:977.250»,   «c:3.000»,
+               «c:42.000»,   «c:9.160»,   «c:5.000»,   «c:2.405»,  «c:55.540»,   «c:5.133», «c:318.817»,
+                «c:8.097», «c:619.637»,   «c:3.000»,  «c:18.000»,   «c:9.519»,   «c:5.000»,   «c:2.084»,
+               «c:32.690»,   «c:5.291»,  «c:83.869»,   «c:8.426», «c:107.438»,   «c:2.000»,   «c:9.000»,
+                «c:5.000»,  «c:56.000»,  «c:17.052»,   «c:5.000»,   «c:0.135»,  «c:11.259»,   «c:0.517»,
+               «c:38.224»,   «c:1.606»,  «c:22.996»,   «c:6.772», «c:261.349»,  «c:12.622», «c:637.148»,
+                «c:4.000»,  «c:24.000»,  «c:18.958»,   «c:5.000»,   «c:2.512»,  «c:23.023»,   «c:4.348»,
+               «c:41.660»,   «c:8.253», «c:264.646»,  «c:15.377», «c:181.670»,   «c:1.000»,  «c:10.000»,
+                «c:5.000»,  «c:50.000»,  «c:33.491»,   «c:5.000»,   «c:0.132»,  «c:16.036»,   «c:0.863»,
+                «c:7.863»,   «c:3.086»,  «c:70.316»,  «c:11.789», «c:423.351»,  «c:23.263», «c:742.355»,
+                «c:1.000»,  «c:20.000»,   «c:0.000»,  «c:12.000»,  «c:53.001»,   «c:3.000»,
+              «k:OTHERS» => «c:0.0»                                                   ),
+
+       «c:21» => (  «c:4.000»,  «c:2.000»,   «c:9.000»,   «c:6.000»,  «c:20.000»,   «c:7.633»,  «c:5.400»,
+                «c:0.026»,  «c:7.127»,   «c:0.137»,  «c:12.449»,   «c:0.315»,  «c:11.995»,  «c:1.778»,
+               «c:10.055»,  «c:4.029», «c:114.166»,   «c:6.621», «c:391.206»,   «c:3.000», «c:56.000»,
+                «c:8.793»,  «c:5.000»,   «c:2.249»,  «c:26.391»,   «c:4.042», «c:213.808»,  «c:7.621»,
+              «c:938.793»,  «c:2.000»,   «c:6.000»,   «c:5.000»,  «c:42.000»,  «c:18.147»,  «c:9.000»,
+                «c:0.191»,  «c:4.142»,   «c:1.235»,  «c:37.378»,   «c:3.358»,  «c:25.971»,  «c:8.429»,
+              «c:333.340», «c:17.096», «c:311.163»,   «c:3.000»,  «c:18.000»,  «c:20.233»,  «c:5.000»,
+                «c:3.472», «c:33.103»,   «c:9.065», «c:184.185»,  «c:16.556», «c:136.707»,  «c:1.000»,
+                «c:9.000»,  «c:5.000»,  «c:56.000»,  «c:35.161»,   «c:5.000»,   «c:0.194», «c:11.191»,
+                «c:1.305»,  «c:5.417»,   «c:5.813»,  «c:53.679»,  «c:14.172», «c:460.678», «c:26.169»,
+              «c:380.006»,  «c:1.000»,  «c:28.000»,   «c:0.000»,  «c:50.000»,  «c:56.025»,  «c:3.000»,
+              «k:OTHERS» => «c:0.0»                                                  ));
+
+    «m:--  »«x:Calculate the partition functions for the Nma dgrees of ionisation of
+»    «m:--  »«x:the element Iel as a function of temperature T (Theta = 5040.0 / T)
+»    «m:--  »«x:according to the procedure of Traving, Baschek and Holweger,
+»    «m:--  »«x:Abhandlungen der Hamburger Sternwarte, Vol. VIII, Nr. 1, 1966 .
+»
+    Ic, It, K         : Integer;
+    Igg, Igp, G0, Gpr : Real;
+    Sum, X, Y         : Real;
+
+    Chi  : «k:ARRAY» («c:1..8»)  «k:OF»  «t:Real»;
+    GG   : «k:ARRAY» («c:1..8»)  «k:OF»  «t:Real»;
+
+  «k:BEGIN»
+    Iflag := -IEL;
+    «k:FOR»  M  «k:IN»  «t:1..No_elements»  «k:LOOP»
+      Ic := «c:0»;
+      «k:IF»  (Iel = Atoms(M).Isyb)  «k:THEN»
+        Nma := Integer (G(M)(Ic+«c:1»));
+        «k:IF»  (Nma > «c:3»)  «k:THEN»
+          Nma := «c:3»;
+        «k:END» «k:IF»;
+        Ic  := Ic + «c:1»;
+        «k:FOR»  N  «k:IN»  «t:1..Nma»  «k:LOOP»
+          It   := Integer (G(M)(Ic+«c:1»));
+          Igg  := G(M)(Ic+«c:2»);
+          Ic   := Ic + «c:2»;
+          G0   := Igg;
+          Q(N) := G0;
+          «k:FOR»  I  «k:IN»  «t:1..It»  «k:LOOP»
+            K    := Integer (G(M)(Ic+«c:1»));
+            Igp  := G(M)(Ic+«c:2»);
+            X    := G(M)(Ic+«c:3»);
+            Y    := G(M)(Ic+«c:4»);
+            Ic   := Ic + «c:4»;
+            Gpr  := Igp;
+            «k:IF»  (I = «c:1»)  «k:THEN»
+              Chi_ion(N) := X;
+            «k:END» «k:IF»;
+            «k:IF»  (K /= «c:0»)  «k:THEN»
+              «k:FOR»  L  «k:IN»  «t:1..K»  «k:LOOP»
+                Chi(L) := G(M)(Ic+«c:1»);
+                GG(L)  := G(M)(Ic+«c:2»);
+                Ic     := Ic + «c:2»;
+              «k:END» «k:LOOP»;
+              Sum := «c:0.0»;
+              «k:FOR»  J  «k:IN»  «t:1..K»  «k:LOOP»
+                Sum := Sum + GG(J) * Exp10 (-Chi(J) * Theta);
+              «k:END» «k:LOOP»;
+              Q(N) := Q(N) + Sum + Gpr * Exp10 (-Theta * X) *
+                      Qas (L => Y, N => N, DChi => DChi, TH => -Theta);
+            «k:END» «k:IF»;
+          «k:END» «k:LOOP»;
+        «k:END» «k:LOOP»;
+        Iflag := «c:1»;
+      «k:END» «k:IF»;
+    «k:END» «k:LOOP»;
+
+  «k:END»  «f:Partition_function»;
+
+«k:END»  «f:Provide_partition_function»;
