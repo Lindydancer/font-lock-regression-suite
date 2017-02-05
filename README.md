@@ -1,6 +1,7 @@
 # font-lock-regression-suite - Test suite for font-lock
 
 *Author:* Anders Lindgren<br>
+*Version:* 0.0.1<br>
 *URL:* [https://github.com/Lindydancer/font-lock-regression-suite](https://github.com/Lindydancer/font-lock-regression-suite)<br>
 
 A collection of example source files for a large number of

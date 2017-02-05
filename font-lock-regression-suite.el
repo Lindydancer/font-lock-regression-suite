@@ -4,8 +4,9 @@
 
 ;; Author: Anders Lindgren
 ;; Keywords: faces
+;; Version: 0.0.1
 ;; URL: https://github.com/Lindydancer/font-lock-regression-suite
-;; Package-Requires: ((faceup "0.0.3"))
+;; Package-Requires: ((faceup "0.0.4"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -234,7 +235,7 @@ ARGS."
   (dolist (f (directory-files (if path
                                   (concat src-dir path)
                                 src-dir)))
-    (unless (member f '("." ".."))
+    (unless (string-match "^\\." f)     ; ".", "..", ".nosearch" etc.
       (let ((new-path (if path
                           (concat path "/" f)
                         f)))
